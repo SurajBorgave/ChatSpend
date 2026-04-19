@@ -427,39 +427,6 @@
 
   <!-- ───────────── FLOATING CHATBOT ───────────── -->
 
-  <!-- Chat Panel (slides up above FAB) -->
-  <div class="chatbot-panel hidden" id="chatbot-panel">
-    <div class="chatbot-panel-header">
-      <div class="chatbot-panel-title">
-        <span>🤖</span>
-        <span>ChatSpend Bot</span>
-      </div>
-      <button class="chatbot-panel-close" onclick="toggleChatbot()" title="Close">✕</button>
-    </div>
-
-    <div class="local-chat-messages" id="local-chat-messages">
-      <div class="lc-msg lc-msg-bot">
-        <span class="lc-avatar">🤖</span>
-        <div class="lc-bubble">
-          Hi! I’m ChatSpend Bot.<br/>
-          Try:<br/>
-          <em>“spent 200 on pizza”</em><br/>
-          <em>“set budget 5000”</em><br/>
-          <em>“show summary”</em>
-        </div>
-      </div>
-    </div>
-
-    <div class="local-chat-input-row">
-      <input
-        type="text"
-        id="local-chat-input"
-        placeholder='e.g. "spent 200 on pizza"'
-        onkeydown="handleLocalChatKey(event)"
-        autocomplete="off"
-      />
-      <button class="btn-primary" onclick="sendLocalChat()">➤</button>
-    </div>
   </div>
 
   <!-- Dialogflow Messenger Integration -->
