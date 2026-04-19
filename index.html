@@ -462,12 +462,14 @@
     </div>
   </div>
 
-  <!-- FAB Button -->
-  <button class="chatbot-fab" id="chatbot-fab" onclick="toggleChatbot()" title="ChatSpend Bot">
-    <span class="fab-icon-open">💬</span>
-    <span class="fab-icon-close hidden">✕</span>
-    <span class="fab-badge" id="fab-badge"></span>
-  </button>
+  <!-- Dialogflow Messenger Integration -->
+  <!-- To use: Replace 'YOUR_PROJECT_ID' with your Dialogflow Project ID from Step 5 of README -->
+  <df-messenger
+    intent="WELCOME"
+    chat-title="ChatSpend AI"
+    agent-id="YOUR_PROJECT_ID"
+    language-code="en"
+  ></df-messenger>
 
   <!-- Main JavaScript -->
   <script src="script.js"></script>
