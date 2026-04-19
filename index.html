@@ -427,15 +427,21 @@
 
   <!-- ───────────── FLOATING CHATBOT ───────────── -->
 
-  </div>
+  <!-- Custom FAB Launcher (Restored for visibility) -->
+  <button class="chatbot-fab" id="chatbot-fab" onclick="toggleChatbot()" title="ChatSpend AI Bot">
+    <span class="fab-icon-open">💬</span>
+    <span class="fab-icon-close" style="display:none">✕</span>
+    <span class="fab-badge" id="fab-badge"></span>
+  </button>
 
   <!-- Dialogflow Messenger Integration -->
   <script src="https://www.gstatic.com/dialogflow-console/fast/messenger/bootstrap.js?v=1"></script>
   <df-messenger
     intent="WELCOME"
-    chat-title="ChatSpend"
+    chat-title="ChatSpend AI"
     agent-id="658f90d4-866c-49c2-8ef8-4c0564b39e96"
     language-code="en"
+    storage-option="none"
   >
     <style>
       df-messenger {
@@ -446,6 +452,11 @@
         --df-messenger-font-color: #ffffff;
         --df-messenger-input-box-color: #1a1a2e;
         --df-messenger-input-font-color: #ffffff;
+        z-index: 9999;
+      }
+      /* Hide default bubble */
+      df-messenger-chat-bubble {
+        display: none !important;
       }
     </style>
   </df-messenger>
