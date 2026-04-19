@@ -1200,14 +1200,6 @@ function escHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
-/** Toggle the Dialogflow Messenger chatbot panel */
-function toggleChatbot() {
-  const dfMessenger = document.querySelector('df-messenger');
-  if (dfMessenger) {
-    dfMessenger.expand();
-  }
-}
-
 /* ============================================================
    THEME TOGGLE
    ============================================================ */
