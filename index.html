@@ -425,30 +425,33 @@
   <!-- Toast Notification -->
   <div class="toast hidden" id="toast"></div>
 
-  <!-- ───────────── FLOATING CHATBOT ───────────── -->
+  <!-- ───────────── DIALOGFLOW CHATBOT ───────────── -->
 
-  <!-- Dialogflow Messenger Integration -->
+  <!-- Dialogflow Messenger — exact code from Google Console -->
   <script src="https://www.gstatic.com/dialogflow-console/fast/messenger/bootstrap.js?v=1"></script>
   <df-messenger
     intent="WELCOME"
-    chat-title="ChatSpend AI"
+    chat-title="ChatSpend"
     agent-id="658f90d4-866c-49c2-8ef8-4c0564b39e96"
     language-code="en"
-    storage-option="none"
-  >
-    <style>
-      df-messenger {
-        --df-messenger-button-titlebar-color: #7c3aed;
-        --df-messenger-send-icon: #7c3aed;
-        --df-messenger-user-message-title: #7c3aed;
-        --df-messenger-chat-background-color: #0f0f1a;
-        --df-messenger-font-color: #ffffff;
-        --df-messenger-input-box-color: #1a1a2e;
-        --df-messenger-input-font-color: #ffffff;
-        z-index: 9999;
-      }
-    </style>
-  </df-messenger>
+  ></df-messenger>
+
+  <!-- Theme the Dialogflow bubble to match our purple design -->
+  <style>
+    df-messenger {
+      --df-messenger-button-titlebar-color: #7c3aed;
+      --df-messenger-send-icon: #7c3aed;
+      --df-messenger-user-message: #7c3aed;
+      --df-messenger-chat-background-color: #0f0f1a;
+      --df-messenger-font-color: #ffffff;
+      --df-messenger-input-box-color: #1a1a2e;
+      --df-messenger-input-font-color: #ffffff;
+      z-index: 9999;
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+    }
+  </style>
 
   <!-- Main JavaScript -->
   <script src="script.js"></script>
