@@ -1,0 +1,841 @@
+/**
+ * ChatSpend – Google Apps Script Backend (Code.gs)
+ * =================================================
+ * Webhook for Dialogflow ES.
+ * Handles all intents: AddExpense, SetBudget, AddCategory,
+ * DeleteExpense, UpdateExpense, SearchExpense, ShowSummary, UndoLast.
+ * Data is stored in Google Sheets.
+ *
+ * SETUP INSTRUCTIONS (one-time):
+ * -----------------------------------------------
+ * 1. Open https://script.google.com → New Project
+ * 2. Paste this entire file into the editor (replacing existing content)
+ * 3. Replace SHEET_ID below with your Google Sheets ID
+ *    (found in the Sheets URL: .../spreadsheets/d/SHEET_ID/edit)
+ * 4. Click Deploy → New Deployment → Web App
+ *    - Execute as: Me
+ *    - Who has access: Anyone (even anonymous)
+ * 5. Copy the generated Web App URL
+ * 6. Paste it into:
+ *    a) script.js → BACKEND_URL constant
+ *    b) Dialogflow console → Fulfillment → Webhook URL
+ * 7. Run setupSheets() once (via Run menu) to create sheet headers
+ */
+
+/* ============================================================
+   CONFIGURATION
+   ============================================================ */
+
+/** Google Sheets document ID */
+const SHEET_ID = '1dftZRZ-RfNbMKGVUgjyyo95FYU1OE38SW_ZXb9lR9Eo';
+
+/** Sheet tab names */
+const SHEETS = {
+  TRANSACTIONS: 'ChatSpend',   // primary sheet used by the website
+  CATEGORIES:   'Categories',
+  BUDGET:       'Budget',
+};
+
+/* ============================================================
+   ENTRY POINT – Handles Dialogflow webhook + website requests
+   ============================================================ */
+
+/**
+ * doPost handles three types of POST requests:
+ *
+ *  A) Dialogflow webhook  → body.queryResult.intent + parameters
+ *  B) Website chat (format 1) → body.queryResult.queryText
+ *  C) Website chat (format 2) → body.message  OR  body.text
+ *
+ * All paths return { fulfillmentText: "..." }.
+ * Safe null-checks are used throughout — no "Cannot read property of undefined".
+ */
+function doPost(e) {
+  try {
+    const body = JSON.parse(e.postData.contents);
+
+    // Debug log — visible in Apps Script → Executions
+    Logger.log('doPost received: ' + JSON.stringify(body));
+
+    // ── Legacy direct-action calls from frontend (action field) ──────
+    if (body.action) {
+      Logger.log('Routing to handleDirectAction: ' + body.action);
+      return handleDirectAction(body);
+    }
+
+    // Safe extraction — works for Dialogflow AND plain website POSTs
+    const intent = (
+      body.queryResult &&
+      body.queryResult.intent &&
+      body.queryResult.intent.displayName
+    ) || '';
+
+    const params = (body.queryResult && body.queryResult.parameters) || {};
+
+    // Accept message from any of the three common locations
+    const queryText = (
+      (body.queryResult && body.queryResult.queryText) ||
+      body.message ||
+      body.text ||
+      ''
+    ).toString().trim();
+
+    Logger.log('intent="' + intent + '" queryText="' + queryText + '"');
+
+    // ── A: Dialogflow with a known intent ───────────────────────────
+    if (intent) {
+      let reply = '';
+      let customPayload = null;
+
+      if      (intent.includes('AddExpense')    || intent.includes('Expense.add'))      { ({ reply, customPayload } = handleAddExpense(params, queryText)); }
+      else if (intent.includes('SetBudget')     || intent.includes('Budget.set'))       { ({ reply, customPayload } = handleSetBudget(params)); }
+      else if (intent.includes('AddCategory')   || intent.includes('Category.add'))     { ({ reply, customPayload } = handleAddCategory(params)); }
+      else if (intent.includes('DeleteExpense') || intent.includes('Expense.delete'))   { ({ reply, customPayload } = handleDeleteExpense(params, queryText)); }
+      else if (intent.includes('UpdateExpense') || intent.includes('Expense.update'))   { ({ reply, customPayload } = handleUpdateExpense(params, queryText)); }
+      else if (intent.includes('Search')        || intent.includes('Expense.search'))   { ({ reply, customPayload } = handleSearch(params, queryText)); }
+      else if (intent.includes('Summary')       || intent.includes('Report'))           { ({ reply, customPayload } = handleSummary()); }
+      else if (intent.includes('ShowAll')       || intent.includes('Expense.show'))     { ({ reply, customPayload } = handleShowAll()); }
+      else if (intent.includes('Undo')          || intent.includes('Expense.undo'))     { ({ reply, customPayload } = handleUndo()); }
+      else if (intent.includes('ShowFilter')    || intent.includes('Expense.filter'))   { ({ reply, customPayload } = handleFilter(params, queryText)); }
+      else {
+        reply = "I didn't understand that. Try: 'spent 50 on coffee', 'set budget 5000', or 'show summary'.";
+      }
+
+      const responseObj = { fulfillmentText: reply };
+      if (customPayload) {
+        responseObj.fulfillmentMessages = [
+          { text: { text: [reply] } },
+          { payload: customPayload },
+        ];
+      }
+      Logger.log('Dialogflow reply: ' + reply);
+      return ContentService
+        .createTextOutput(JSON.stringify(responseObj))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // ── B/C: Plain website request — handle with NLP parser ─────────
+    if (!queryText) {
+      Logger.log('No queryText found in request body');
+      return jsonReply('⚠️ No message received. Send { "queryResult": { "queryText": "..." } } or { "message": "..." }');
+    }
+
+    Logger.log('Routing to handleWebsiteMessage: "' + queryText + '"');
+    return handleWebsiteMessage(queryText);
+
+  } catch (err) {
+    Logger.log('doPost ERROR: ' + err.toString());
+    return ContentService
+      .createTextOutput(JSON.stringify({ fulfillmentText: 'ERROR: ' + err.message }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+/**
+ * Parse and act on a plain-text message from the website chat.
+ * Supports: add expense, set budget, summary, show all, undo, delete, search.
+ * @param {string} text - raw user message, e.g. "spent 50 on pizza"
+ */
+function handleWebsiteMessage(text) {
+  try {
+    const raw   = text.trim();
+    const lower = raw.toLowerCase();
+
+    // ── Set Budget ─────────────────────────────────────────────────
+    if (/set\s+budget|budget\s+is|my\s+budget|budget\s+of/.test(lower)) {
+      const m = lower.match(/(\d+(?:\.\d+)?)/);
+      if (!m) return jsonReply('⚠️ Please include an amount. e.g. "set budget 5000"');
+      const amt   = parseFloat(m[1]);
+      const month = getCurrentMonthKey();
+      setBudgetInSheet(month, amt);
+      return jsonReply('🎯 Budget set to ₹' + amt + ' for ' + month);
+    }
+
+    // ── Add Category ───────────────────────────────────────────────
+    const catAddMatch = raw.match(/(?:add|create|new)\s+category\s+(.+)/i);
+    if (catAddMatch) {
+      const catName = capitalizeWords(catAddMatch[1].trim());
+      addCategoryToSheet(catName, '');
+      return jsonReply('🏷️ Category "' + catName + '" added!');
+    }
+
+    // ── Undo ───────────────────────────────────────────────────────
+    if (/^undo|undo\s+last|restore\s+last/.test(lower)) {
+      const props = PropertiesService.getScriptProperties();
+      const rawTx = props.getProperty('LAST_DELETED');
+      if (!rawTx) return jsonReply('⚠️ Nothing to undo.');
+      const tx = JSON.parse(rawTx);
+      addTransactionToSheet(tx);
+      props.deleteProperty('LAST_DELETED');
+      return jsonReply('↩️ Restored "' + tx.title + '" (₹' + tx.amount + ')');
+    }
+
+    // ── Delete ─────────────────────────────────────────────────────
+    if (/^delete|^remove/.test(lower)) {
+      if (/last|recent/.test(lower)) {
+        const tx = deleteLastTransaction();
+        if (!tx) return jsonReply('⚠️ No transactions to delete.');
+        return jsonReply('🗑️ Deleted "' + tx.title + '" (₹' + tx.amount + '). Type "undo last" to restore.');
+      }
+      const q = raw.replace(/^(delete|remove)\s+/i, '').trim();
+      if (q) {
+        const found = searchTransactions(q);
+        if (!found.length) return jsonReply('⚠️ No transaction found matching "' + q + '".');
+        deleteTransactionById(found[0][0]);
+        return jsonReply('🗑️ Deleted "' + found[0][1] + '" (₹' + found[0][2] + '). Type "undo last" to restore.');
+      }
+      return jsonReply('⚠️ Specify what to delete. e.g. "delete pizza" or "delete last"');
+    }
+
+    // ── Search ─────────────────────────────────────────────────────
+    const searchMatch = raw.match(/^(?:search|find|look\s+up)\s+(.+)/i);
+    if (searchMatch) {
+      const q       = searchMatch[1].trim();
+      const results = searchTransactions(q);
+      if (!results.length) return jsonReply('🔍 No results for "' + q + '".');
+      const lines = results.slice(0, 5).map(function(t) {
+        return '• ' + t[1] + ' – ₹' + t[2] + ' (' + t[3] + ', ' + t[4] + ')';
+      });
+      return jsonReply('🔍 ' + results.length + ' result(s) for "' + q + '":\n' + lines.join('\n'));
+    }
+
+    // ── Summary ────────────────────────────────────────────────────
+    if (/summary|report|balance|status|how\s+much/.test(lower) && !/spent\s+\d/.test(lower)) {
+      const r = handleSummary();
+      return jsonReply(r.reply);
+    }
+
+    // ── Show All ───────────────────────────────────────────────────
+    if (/show\s+all|all\s+transactions|list\s+all/.test(lower)) {
+      const r = handleShowAll();
+      return jsonReply(r.reply);
+    }
+
+    // ── Add Expense (default: number detected in text) ─────────────
+    const amountMatch = lower.match(/\b(\d+(?:\.\d+)?)\b/);
+    if (amountMatch) {
+      const amount = parseFloat(amountMatch[1]);
+
+      // Try to extract item: "on X", "for X", "of X"
+      const itemMatch = raw.match(/(?:on|for|of)\s+([a-zA-Z][a-zA-Z0-9\s]*?)(?:\s+(?:via|using|by|through|with)|$)/i);
+      const item      = itemMatch ? itemMatch[1].trim() : null;
+
+      if (amount > 0 && item) {
+        const category = detectCategory(item);
+        const payment  = detectPaymentFromText(lower);
+        const title    = capitalizeWords(item);
+        const date     = getTodayDDMMYYYY();
+        const month    = getCurrentMonthKey();
+
+        addTransactionToSheet({ amount, title, category, payment, date, month });
+
+        return jsonReply(
+          '✅ Added ₹' + amount + ' for ' + title +
+          '\n📂 ' + category + ' · 💳 ' + payment
+        );
+      }
+
+      if (amount > 0 && !item) {
+        return jsonReply('⚠️ I see ₹' + amount + ' but couldn\'t find the item. Try: "spent ' + amount + ' on coffee"');
+      }
+    }
+
+    // ── Fallback ───────────────────────────────────────────────────
+    return jsonReply(
+      '❓ I didn\'t understand that. Try:\n' +
+      '• "spent 200 on pizza"\n' +
+      '• "paid 50 for uber via cash"\n' +
+      '• "set budget 5000"\n' +
+      '• "add category Gym"\n' +
+      '• "show summary"\n' +
+      '• "delete last"'
+    );
+
+  } catch (err) {
+    Logger.log('handleWebsiteMessage error: ' + err.toString());
+    return ContentService
+      .createTextOutput(JSON.stringify({ fulfillmentText: 'ERROR: ' + err.message }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+/** Helper – wrap a plain string as a fulfillmentText JSON response */
+function jsonReply(text) {
+  return ContentService
+    .createTextOutput(JSON.stringify({ fulfillmentText: text }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/* ============================================================
+   DIRECT ACTION HANDLER (called from frontend script.js)
+   ============================================================ */
+
+function handleDirectAction(body) {
+  let result = {};
+
+  switch (body.action) {
+    case 'addExpense':
+      result = directAddExpense(body);
+      break;
+    case 'updateExpense':
+      result = directUpdateExpense(body);
+      break;
+    case 'deleteExpense':
+      result = directDeleteExpense(body);
+      break;
+    case 'deleteLast':
+      result = directDeleteLast();
+      break;
+    case 'setbudget':
+      result = directSetBudget(body);
+      break;
+    case 'addCategory':
+      result = directAddCategory(body);
+      break;
+    case 'getAll':
+      result = { success: true, transactions: getAllTransactions() };
+      break;
+    case 'search':
+      result = { success: true, transactions: searchTransactions(body.query) };
+      break;
+    default:
+      result = { success: false, error: 'Unknown action' };
+  }
+
+  return ContentService
+    .createTextOutput(JSON.stringify(result))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/* ============================================================
+   INTENT HANDLERS
+   ============================================================ */
+
+/**
+ * HandleAddExpense
+ * Extracts amount, item, payment from Dialogflow params.
+ * Also parses payment method from the raw query text.
+ */
+function handleAddExpense(params, queryText) {
+  const amount  = parseFloat(params['number'] || params['amount'] || 0);
+  const rawItem = (params['any'] || params['item'] || '').toString().trim();
+  const payment = detectPaymentFromText(queryText);
+  const category = detectCategory(rawItem);
+  const title   = capitalizeWords(rawItem || 'Unnamed');
+  const date    = getTodayDDMMYYYY();
+  const month   = getCurrentMonthKey();
+
+  if (!amount || amount <= 0) {
+    return { reply: "⚠️ I couldn't detect an amount. Try: 'spent 200 on pizza'" };
+  }
+
+  // Store in sheet
+  const id = addTransactionToSheet({ amount, title, category, payment, date, month });
+
+  const reply = `✅ Added ₹${amount} for ${title} (${category} via ${payment}) on ${date}`;
+  const customPayload = {
+    action: 'expenseAdded',
+    data: { id, amount, title, category, payment, date, month },
+  };
+
+  return { reply, customPayload };
+}
+
+/** Handle SetBudget intent */
+function handleSetBudget(params) {
+  const amount = parseFloat(params['number'] || params['budget'] || 0);
+  if (!amount || amount <= 0) {
+    return { reply: "⚠️ Couldn't detect budget amount. Try: 'set budget 5000'" };
+  }
+
+  const month = getCurrentMonthKey();
+  setBudgetInSheet(month, amount);
+
+  const reply = `🎯 Budget set to ₹${amount} for ${month}`;
+  return { reply, customPayload: { action: 'budgetSet', data: { amount, month } } };
+}
+
+/** Handle AddCategory intent */
+function handleAddCategory(params) {
+  const name = capitalizeWords((params['category-name'] || params['any'] || '').toString().trim());
+  if (!name) {
+    return { reply: "⚠️ Please specify a category name. Try: 'add category Gym'" };
+  }
+
+  addCategoryToSheet(name, '');
+  const reply = `🏷️ Category "${name}" added! You can now use it when logging expenses.`;
+  return { reply, customPayload: { action: 'categoryAdded', data: { name } } };
+}
+
+/** Handle DeleteExpense intent */
+function handleDeleteExpense(params, queryText) {
+  const lower = queryText.toLowerCase();
+
+  // "delete last" or "undo"
+  if (lower.includes('last') || lower.includes('recent')) {
+    const tx = deleteLastTransaction();
+    if (!tx) return { reply: '⚠️ No transactions to delete.' };
+    const reply = `🗑️ Deleted last transaction: ${tx.title} (₹${tx.amount})`;
+    return { reply, customPayload: { action: 'expenseDeleted', data: { id: null } } };
+  }
+
+  // "delete pizza" – search by title
+  const query = (params['any'] || params['title'] || '').toString().trim();
+  if (query) {
+    const txs = searchTransactions(query);
+    if (txs.length === 0) {
+      return { reply: `⚠️ No transaction found matching "${query}".` };
+    }
+    const tx = txs[0]; // delete the most recent match
+    deleteTransactionById(tx[0]); // col 0 = ID
+    const reply = `🗑️ Deleted "${tx[1]}" (₹${tx[2]}). Type "undo last" to restore.`;
+    return { reply, customPayload: { action: 'expenseDeleted', data: { id: tx[0] } } };
+  }
+
+  return { reply: "⚠️ Please specify what to delete. Try: 'delete pizza' or 'delete last'" };
+}
+
+/** Handle UpdateExpense intent */
+function handleUpdateExpense(params, queryText) {
+  const query   = (params['any'] || '').toString().trim();
+  const amount  = parseFloat(params['number'] || 0);
+
+  if (!query || !amount) {
+    return { reply: "⚠️ Try: 'update pizza to 300'" };
+  }
+
+  const txs = searchTransactions(query);
+  if (txs.length === 0) {
+    return { reply: `⚠️ No transaction found matching "${query}".` };
+  }
+
+  const tx  = txs[0];
+  const txId = tx[0];
+  updateTransactionById(txId, { amount });
+
+  const reply = `✏️ Updated "${tx[1]}" to ₹${amount}`;
+  return { reply, customPayload: { action: 'expenseUpdated', data: { id: txId, amount } } };
+}
+
+/** Handle Search intent */
+function handleSearch(params, queryText) {
+  const query = (params['any'] || params['query'] || queryText).toString().trim();
+  const txs   = searchTransactions(query);
+
+  if (txs.length === 0) {
+    return { reply: `🔍 No transactions found for "${query}".` };
+  }
+
+  const lines = txs.slice(0, 5).map(t => `• ${t[1]} – ₹${t[2]} (${t[3]}, ${t[5]})`);
+  const reply = `🔍 Found ${txs.length} result(s) for "${query}":\n${lines.join('\n')}`;
+  return { reply };
+}
+
+/** Handle ShowAll / Summary intent */
+function handleSummary() {
+  const month   = getCurrentMonthKey();
+  const budget  = getBudgetForMonth(month);
+  const txs     = getAllTransactions().filter(t => t[7] === month); // col 7 = Month
+  const spent   = txs.reduce((s, t) => s + parseFloat(t[2] || 0), 0);
+  const remaining = budget - spent;
+  const count   = txs.length;
+
+  // Category breakdown
+  const catMap = {};
+  txs.forEach(t => { const c = t[3]; catMap[c] = (catMap[c] || 0) + parseFloat(t[2]); });
+  const catLines = Object.entries(catMap).map(([k, v]) => `  • ${k}: ₹${v.toFixed(0)}`);
+
+  let reply = `📊 *${month} Summary*\n`;
+  reply += `💸 Spent: ₹${spent.toFixed(0)} / Budget: ₹${budget}\n`;
+  reply += `💰 Remaining: ₹${remaining.toFixed(0)}\n`;
+  reply += `📝 Transactions: ${count}\n`;
+  if (catLines.length) reply += `\nBy Category:\n${catLines.join('\n')}`;
+  if (spent > budget && budget > 0) reply += `\n\n⚠️ You've exceeded your budget!`;
+
+  return { reply };
+}
+
+/** Handle ShowAll */
+function handleShowAll() {
+  const txs = getAllTransactions().slice(0, 10);
+  if (txs.length === 0) return { reply: '📭 No transactions recorded yet.' };
+
+  const lines = txs.map(t => `• ${t[1]} – ₹${t[2]} (${t[3]}, ${t[5]})`);
+  return { reply: `📋 Last ${txs.length} transactions:\n${lines.join('\n')}` };
+}
+
+/** Handle Undo (restore last deleted) */
+function handleUndo() {
+  // We store last deleted row in Script Properties
+  const props = PropertiesService.getScriptProperties();
+  const raw   = props.getProperty('LAST_DELETED');
+  if (!raw) return { reply: '⚠️ Nothing to undo.' };
+
+  const tx = JSON.parse(raw);
+  addTransactionToSheet(tx);
+  props.deleteProperty('LAST_DELETED');
+
+  const reply = `↩️ Restored "${tx.title}" (₹${tx.amount})`;
+  return { reply, customPayload: { action: 'expenseAdded', data: tx } };
+}
+
+/** Handle filter (by category or payment) */
+function handleFilter(params, queryText) {
+  const lower = queryText.toLowerCase();
+
+  // Detect payment filter
+  let payFilter = null;
+  if (/\bcash\b/.test(lower))            payFilter = 'Cash';
+  else if (/\bcard\b/.test(lower))       payFilter = 'Card';
+  else if (/\bupi\b/.test(lower))        payFilter = 'UPI';
+
+  // Detect category filter
+  const allCats = getAllCategoryNames();
+  const catFilter = allCats.find(c => lower.includes(c.toLowerCase()));
+
+  let txs = getAllTransactions();
+  if (payFilter)  txs = txs.filter(t => t[5] === payFilter);
+  if (catFilter)  txs = txs.filter(t => t[3].toLowerCase() === catFilter.toLowerCase());
+
+  if (txs.length === 0) {
+    return { reply: `⚠️ No transactions found for that filter.` };
+  }
+
+  const total = txs.reduce((s, t) => s + parseFloat(t[2] || 0), 0);
+  const lines = txs.slice(0, 8).map(t => `• ${t[1]} – ₹${t[2]} (${t[3]}, ${t[5]})`);
+  return { reply: `📋 ${txs.length} transaction(s) (₹${total.toFixed(0)} total):\n${lines.join('\n')}` };
+}
+
+/* ============================================================
+   GOOGLE SHEETS HELPERS
+   ============================================================ */
+
+function getSheet(name) {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  return ss.getSheetByName(name) || ss.insertSheet(name);
+}
+
+/** Initialize sheets with headers (run this once manually) */
+function setupSheets() {
+  const txSheet   = getSheet(SHEETS.TRANSACTIONS);
+  const catSheet  = getSheet(SHEETS.CATEGORIES);
+  const budSheet  = getSheet(SHEETS.BUDGET);
+
+  if (txSheet.getLastRow() === 0) {
+    txSheet.appendRow(['ID', 'Title', 'Amount', 'Category', 'PaymentMethod', 'Date', 'Month', 'Timestamp']);
+    txSheet.getRange(1, 1, 1, 8).setFontWeight('bold');
+  }
+  if (catSheet.getLastRow() === 0) {
+    catSheet.appendRow(['CategoryName', 'Keywords']);
+    catSheet.getRange(1, 1, 1, 2).setFontWeight('bold');
+  }
+  if (budSheet.getLastRow() === 0) {
+    budSheet.appendRow(['Month', 'BudgetAmount']);
+    budSheet.getRange(1, 1, 1, 2).setFontWeight('bold');
+  }
+  Logger.log('Sheets initialized successfully!');
+}
+
+/** Add a transaction row */
+function addTransactionToSheet({ amount, title, category, payment, date, month }) {
+  const id        = 'tx_' + new Date().getTime();
+  const timestamp = new Date().toISOString();
+  getSheet(SHEETS.TRANSACTIONS).appendRow([id, title, amount, category, payment, date, month, timestamp]);
+  return id;
+}
+
+/** Get all transaction rows (as arrays, newest first) */
+function getAllTransactions() {
+  const sheet = getSheet(SHEETS.TRANSACTIONS);
+  const data  = sheet.getDataRange().getValues();
+  if (data.length <= 1) return [];
+  return data.slice(1).reverse(); // skip header, newest first
+}
+
+/** Search transactions by title (partial match) */
+function searchTransactions(query) {
+  const lower = query.toLowerCase();
+  return getAllTransactions().filter(t => t[1].toString().toLowerCase().includes(lower));
+}
+
+/** Delete a transaction by ID */
+function deleteTransactionById(id) {
+  const sheet = getSheet(SHEETS.TRANSACTIONS);
+  const data  = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0] === id) {
+      // Save to undo buffer
+      const tx = { id: data[i][0], title: data[i][1], amount: data[i][2], category: data[i][3], payment: data[i][4], date: data[i][5], month: data[i][6] };
+      PropertiesService.getScriptProperties().setProperty('LAST_DELETED', JSON.stringify(tx));
+      sheet.deleteRow(i + 1);
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Delete the most recent transaction */
+function deleteLastTransaction() {
+  const sheet = getSheet(SHEETS.TRANSACTIONS);
+  const last  = sheet.getLastRow();
+  if (last <= 1) return null;
+  const row = sheet.getRange(last, 1, 1, 8).getValues()[0];
+  const tx  = { id: row[0], title: row[1], amount: row[2], category: row[3], payment: row[4], date: row[5], month: row[6] };
+  PropertiesService.getScriptProperties().setProperty('LAST_DELETED', JSON.stringify(tx));
+  sheet.deleteRow(last);
+  return tx;
+}
+
+/** Update a transaction by ID */
+function updateTransactionById(id, changes) {
+  const sheet = getSheet(SHEETS.TRANSACTIONS);
+  const data  = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0] === id) {
+      if (changes.amount   !== undefined) sheet.getRange(i + 1, 3).setValue(changes.amount);
+      if (changes.title    !== undefined) sheet.getRange(i + 1, 2).setValue(changes.title);
+      if (changes.category !== undefined) sheet.getRange(i + 1, 4).setValue(changes.category);
+      if (changes.payment  !== undefined) sheet.getRange(i + 1, 5).setValue(changes.payment);
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Add or update budget for a month */
+function setBudgetInSheet(month, amount) {
+  const sheet = getSheet(SHEETS.BUDGET);
+  const data  = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0] === month) {
+      sheet.getRange(i + 1, 2).setValue(amount);
+      return;
+    }
+  }
+  sheet.appendRow([month, amount]);
+}
+
+/** Get budget for a specific month */
+function getBudgetForMonth(month) {
+  const sheet = getSheet(SHEETS.BUDGET);
+  const data  = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0] === month) return parseFloat(data[i][1]) || 0;
+  }
+  return 0;
+}
+
+/** Add a custom category */
+function addCategoryToSheet(name, keywords) {
+  const sheet = getSheet(SHEETS.CATEGORIES);
+  const data  = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0].toString().toLowerCase() === name.toLowerCase()) return; // already exists
+  }
+  sheet.appendRow([name, keywords]);
+}
+
+/** Get all custom category names from sheet */
+function getAllCategoryNames() {
+  const defaults = ['Food', 'Transport', 'Shopping', 'Entertainment', 'Bills', 'Healthcare', 'Others'];
+  const sheet    = getSheet(SHEETS.CATEGORIES);
+  const data     = sheet.getDataRange().getValues();
+  const custom   = data.slice(1).map(r => r[0].toString()).filter(Boolean);
+  return [...custom, ...defaults];
+}
+
+/* ============================================================
+   DIRECT ACTION HELPERS (called from frontend)
+   ============================================================ */
+
+function directAddExpense(body) {
+  const id = addTransactionToSheet({
+    amount:   body.amount,
+    title:    body.title,
+    category: body.category || detectCategory(body.title),
+    payment:  body.payment  || 'UPI',
+    date:     body.date     || getTodayDDMMYYYY(),
+    month:    body.month    || getCurrentMonthKey(),
+  });
+  return { success: true, id };
+}
+
+function directUpdateExpense(body) {
+  const ok = updateTransactionById(body.id, body.changes || {});
+  return { success: ok };
+}
+
+function directDeleteExpense(body) {
+  const ok = deleteTransactionById(body.id);
+  return { success: ok };
+}
+
+function directDeleteLast() {
+  const tx = deleteLastTransaction();
+  return { success: !!tx, transaction: tx };
+}
+
+function directSetBudget(body) {
+  setBudgetInSheet(body.month || getCurrentMonthKey(), body.amount);
+  return { success: true };
+}
+
+function directAddCategory(body) {
+  addCategoryToSheet(capitalizeWords(body.name), body.keywords || '');
+  return { success: true };
+}
+
+/* ============================================================
+   NLP UTILITIES (server-side, mirrors script.js)
+   ============================================================ */
+
+const DEFAULT_CATEGORY_KEYWORDS = {
+  'Food':          [
+    'food','pizza','burger','coffee','tea','lunch','dinner','breakfast','snack',
+    'restaurant','cafe','meal','bread','pepsi','cola','juice','water','milk',
+    'egg','chicken','fish','mutton','biryani','curry','roti','naan','dosa','idli',
+    'samosa','chaat','sandwich','pasta','noodle','maggi','soup','icecream','cake',
+    'cookie','chocolate','swiggy','zomato','dominos','kfc','mcdonalds','starbucks',
+    'biscuit','chips','popcorn','soda','lassi','buttermilk','paneer',
+  ],
+  'Groceries':     [
+    'grocery','groceries','vegetable','vegetables','fruit','fruits',
+    'carrot','potato','onion','tomato','spinach','cabbage','cauliflower',
+    'broccoli','peas','beans','corn','mushroom','garlic','ginger','chilli',
+    'lemon','lime','cucumber','pumpkin','radish','beetroot','lettuce',
+    'apple','banana','mango','orange','grapes','strawberry','watermelon',
+    'papaya','pineapple','guava','pomegranate','kiwi','peach','pear','plum',
+    'lentil','lentils','dal','pulse','pulses','rice','wheat','flour','atta',
+    'maida','semolina','suji','oats','quinoa','barley','sugar','salt','oil',
+    'ghee','butter','cheese','curd','yogurt','paneer','tofu','soya',
+    'spice','spices','masala','turmeric','cumin','coriander','pepper',
+    'mustard','cardamom','clove','cinnamon','saffron','basmati','poha',
+    'supermarket','bigbasket','blinkit','zepto','dunzo','kirana','market',
+  ],
+  'Toiletries':    [
+    'toiletries','toiletry','shampoo','conditioner','soap','bodywash',
+    'facewash','face wash','moisturizer','lotion','sunscreen','cream',
+    'toothbrush','toothpaste','mouthwash','floss','razor','shaving','foam',
+    'deodorant','perfume','cologne','aftershave','talcum','powder',
+    'tissue','toilet paper','sanitary','pad','tampon','napkin','cotton',
+    'hairbrush','comb','dye','henna','nail polish','lipstick','makeup',
+    'mascara','foundation','blush','eyeliner','skincare','serum','toner',
+    'cleanser','scrub','dettol','savlon','bandage','antiseptic','vaseline',
+  ],
+  'Transport':     [
+    'transport','uber','ola','auto','bus','metro','train','cab','taxi',
+    'fuel','petrol','diesel','parking','ticket','fare','rapido','bike',
+    'flight','travel','rickshaw','tram','ferry','boat','ship','toll',
+    'highway','vehicle','car','scooter','cycle','bicycle',
+    'irctc','makemytrip','goibibo','redbus','yulu','bounce',
+  ],
+  'Shopping':      [
+    'shopping','clothes','shirt','pants','jeans','dress','kurta','saree',
+    'shoes','sandals','sneakers','boots','socks','jacket','coat','hoodie',
+    'sweater','tshirt','shorts','skirt',
+    'amazon','flipkart','myntra','ajio','nykaa','meesho',
+    'mall','store','shop','boutique','bazaar','exhibition',
+    'bag','purse','wallet','watch','sunglasses','jewellery','ring',
+    'earring','necklace','bracelet','belt','hat','cap','scarf',
+    'laptop','phone','mobile','tablet','headphone','earphone','speaker',
+    'charger','cable','power bank','keyboard','mouse','pen drive',
+    'furniture','curtain','cushion','bedsheet','pillow','blanket',
+    'gift','toy',
+  ],
+  'Entertainment': [
+    'entertainment','movie','cinema','theatre','concert','show','event',
+    'netflix','spotify','amazon prime','hotstar','youtube','disney',
+    'gaming','game','playstation','xbox','steam','pubg',
+    'sports','cricket','football','badminton','tennis','gym','fitness',
+    'club','pub','bar','nightout','party','picnic','outing','trip',
+    'zoo','museum','park','amusement','arcade','bowling','karaoke',
+    'bookmyshow','subscription','membership',
+  ],
+  'Bills':         [
+    'bill','bills','electricity','water bill','internet','wifi','broadband',
+    'phone bill','mobile bill','postpaid','prepaid','recharge','dth',
+    'rent','maintenance','society','housing','emi','loan','mortgage',
+    'insurance','premium','policy','tax','challan','fine','penalty',
+    'gas','cylinder','lpg','piped gas',
+  ],
+  'Healthcare':    [
+    'health','healthcare','medicine','medicines','tablet','capsule','syrup',
+    'doctor','physician','specialist','clinic','hospital',
+    'pharmacy','chemist','medplus','apollo pharmacy','netmeds','1mg',
+    'medical','test','pathology','blood test','xray','scan','mri',
+    'dental','dentist','teeth','eye','optical','glasses','spectacles',
+    'vaccine','vaccination','injection','surgery','operation',
+    'physiotherapy','therapy','counselling','vitamins','multivitamin','omega',
+  ],
+  'Education':     [
+    'education','school','college','university','tuition','coaching',
+    'course','class','lesson','lecture','workshop','seminar','training',
+    'udemy','coursera','unacademy','byjus','vedantu',
+    'books','textbook','notebook','stationery','exam','fee','admission',
+    'library','lab','project','certificate','degree',
+  ],
+};
+
+/**
+ * Detect category from item text (server-side).
+ * When no match found, auto-creates a new category in the sheet.
+ */
+function detectCategory(text) {
+  if (!text) return 'Others';
+  const lower = text.toLowerCase().trim();
+
+  // Check custom categories from sheet first
+  const sheet = getSheet(SHEETS.CATEGORIES);
+  const data  = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    const catName = data[i][0].toString().trim();
+    if (!catName) continue;
+    if (lower.includes(catName.toLowerCase())) return catName;
+    const kws = (data[i][1] || '').toString().toLowerCase().split(',').map(k => k.trim()).filter(Boolean);
+    if (kws.some(kw => lower.includes(kw))) return catName;
+  }
+
+  // Default category keywords
+  for (const [cat, kws] of Object.entries(DEFAULT_CATEGORY_KEYWORDS)) {
+    if (lower.includes(cat.toLowerCase())) return cat;
+    if (kws.some(kw => lower.includes(kw))) return cat;
+  }
+
+  // Auto-create new category from the first word of the item title
+  const newCatName = capitalizeWords(lower.split(' ')[0]);
+  if (newCatName.length >= 2) {
+    addCategoryToSheet(newCatName, lower); // add item text as keyword
+  }
+  return newCatName;
+}
+
+/** Detect payment method from raw query text */
+function detectPaymentFromText(text) {
+  if (!text) return 'UPI';
+  const lower = text.toLowerCase();
+  if (/\bcash\b/.test(lower))                                 return 'Cash';
+  if (/\bcard\b|\bdebit\b|\bcredit\b/.test(lower))           return 'Card';
+  if (/\bupi\b|\bgpay\b|\bpaytm\b|\bphonepe\b/.test(lower))  return 'UPI';
+  return 'UPI';
+}
+
+/* ============================================================
+   DATE UTILITIES (server-side)
+   ============================================================ */
+
+function getTodayDDMMYYYY() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}-${pad(d.getMonth()+1)}-${d.getFullYear()}`;
+}
+
+function getCurrentMonthKey() {
+  const d = new Date();
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${months[d.getMonth()]}-${d.getFullYear()}`;
+}
+
+function capitalizeWords(str) {
+  if (!str) return '';
+  return str.replace(/\b\w/g, c => c.toUpperCase());
+}

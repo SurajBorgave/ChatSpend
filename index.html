@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ChatSpend – NLP Expense Tracker</title>
+  <meta name="description" content="Track your expenses using natural language. ChatSpend is a smart, chatbot-powered expense tracker inspired by Monefy." />
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+  <!-- Main Stylesheet -->
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- Dialogflow Messenger (free tier) -->
+  <!-- SETUP: Replace YOUR_PROJECT_ID with your Dialogflow project ID -->
+  <link rel="stylesheet" href="https://www.gstatic.com/dialogflow-console/fast/df-messenger/prod/v1/themes/df-messenger-default.css" />
+  <script src="https://www.gstatic.com/dialogflow-console/fast/df-messenger/prod/v1/df-messenger.js"></script>
+</head>
+<body>
+
+  <!-- ───────────── TOP NAVBAR ───────────── -->
+  <header class="navbar">
+    <div class="navbar-brand">
+      <span class="brand-icon">💬</span>
+      <span class="brand-name">ChatSpend</span>
+      <span class="brand-tagline">NLP Expense Tracker</span>
+    </div>
+    <nav class="navbar-tabs">
+      <button class="tab-btn active" id="tab-dashboard" onclick="showTab('dashboard')">📊 Dashboard</button>
+      <button class="tab-btn" id="tab-transactions" onclick="showTab('transactions')">📋 Transactions</button>
+      <button class="tab-btn" id="tab-categories" onclick="showTab('categories')">🏷️ Categories</button>
+      <button class="tab-btn" id="tab-chat" onclick="showTab('chat')">💬 Chat Guide</button>
+    </nav>
+    <div class="navbar-actions">
+      <button class="btn-icon" id="btn-dark-toggle" onclick="toggleTheme()" title="Toggle theme">🌙</button>
+    </div>
+  </header>
+
+  <!-- ───────────── MAIN CONTENT ───────────── -->
+  <main class="main-content">
+
+    <!-- ═══════════════════════════════════════
+         SECTION 1 – DASHBOARD
+    ═══════════════════════════════════════ -->
+    <section id="section-dashboard" class="section active">
+
+      <!-- Budget Overview Cards -->
+      <div class="cards-row">
+        <div class="card card-budget" id="card-budget">
+          <div class="card-icon">🎯</div>
+          <div class="card-body">
+            <div class="card-label">Monthly Budget</div>
+            <div class="card-value" id="val-budget">₹0</div>
+          </div>
+          <button class="card-action" onclick="openBudgetModal()">Edit</button>
+        </div>
+        <div class="card card-spent" id="card-spent">
+          <div class="card-icon">💸</div>
+          <div class="card-body">
+            <div class="card-label">Total Spent</div>
+            <div class="card-value" id="val-spent">₹0</div>
+          </div>
+        </div>
+        <div class="card card-remaining" id="card-remaining">
+          <div class="card-icon">💰</div>
+          <div class="card-body">
+            <div class="card-label">Remaining</div>
+            <div class="card-value" id="val-remaining">₹0</div>
+          </div>
+        </div>
+        <div class="card card-txcount">
+          <div class="card-icon">📝</div>
+          <div class="card-body">
+            <div class="card-label">Transactions</div>
+            <div class="card-value" id="val-count">0</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Budget Progress Bar -->
+      <div class="budget-progress-wrap" id="budget-progress-wrap">
+        <div class="budget-progress-label">
+          <span id="progress-label-left">Budget Usage</span>
+          <span id="progress-label-right">0%</span>
+        </div>
+        <div class="budget-bar">
+          <div class="budget-bar-fill" id="budget-bar-fill" style="width: 0%"></div>
+        </div>
+        <div class="overspend-alert hidden" id="overspend-alert">
+          ⚠️ You've exceeded your monthly budget!
+        </div>
+      </div>
+
+      <!-- Charts + Quick Add Row -->
+      <div class="dashboard-grid">
+        <!-- Pie Chart -->
+        <div class="glass-card chart-card">
+          <h3 class="card-title">Spending by Category</h3>
+          <div class="chart-container">
+            <canvas id="pieChart"></canvas>
+            <div class="chart-empty" id="chart-empty">
+              <span>🥧</span>
+              <p>No expenses yet.<br/>Add some via the chat!</p>
+            </div>
+          </div>
+          <div class="chart-legend" id="chart-legend"></div>
+        </div>
+
+        <!-- Quick Add Form (Manual / Fallback) -->
+        <div class="glass-card quick-add-card">
+          <h3 class="card-title">Quick Add Expense</h3>
+          <p class="card-subtitle">Manual entry (or use the chat below)</p>
+
+          <form id="quick-add-form" onsubmit="handleQuickAdd(event)">
+            <div class="form-group">
+              <label for="qa-amount">Amount (₹)</label>
+              <input type="number" id="qa-amount" placeholder="e.g. 250" min="1" required />
+            </div>
+            <div class="form-group">
+              <label for="qa-title">Title</label>
+              <input type="text" id="qa-title" placeholder="e.g. Pizza" required />
+            </div>
+            <div class="form-group">
+              <label for="qa-category">Category</label>
+              <select id="qa-category">
+                <option value="">Auto-detect</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="qa-payment">Payment Method</label>
+              <select id="qa-payment">
+                <option value="UPI">UPI (default)</option>
+                <option value="Cash">Cash</option>
+                <option value="Card">Card</option>
+              </select>
+            </div>
+            <button type="submit" class="btn-primary full-width">
+              ➕ Add Expense
+            </button>
+          </form>
+
+          <!-- Last Added Notification -->
+          <div class="last-added hidden" id="last-added">
+            <span class="last-added-icon">✅</span>
+            <span id="last-added-text"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Monthly Summary Bar Chart -->
+      <div class="glass-card">
+        <h3 class="card-title">Recent Transactions (Last 5)</h3>
+        <div class="recent-list" id="recent-list">
+          <div class="empty-state">
+            <span>💬</span>
+            <p>No transactions yet. Try typing<br/><em>"spent 50 on coffee"</em> in the chat!</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════
+         SECTION 2 – TRANSACTIONS
+    ═══════════════════════════════════════ -->
+    <section id="section-transactions" class="section">
+      <div class="glass-card">
+        <div class="section-header">
+          <h2>All Transactions</h2>
+          <div class="table-controls">
+            <!-- Search -->
+            <input type="text" id="search-input" placeholder="🔍 Search title..." oninput="filterTransactions()" />
+            <!-- Filter by category -->
+            <select id="filter-category" onchange="filterTransactions()">
+              <option value="">All Categories</option>
+            </select>
+            <!-- Filter by payment -->
+            <select id="filter-payment" onchange="filterTransactions()">
+              <option value="">All Payments</option>
+              <option value="UPI">UPI</option>
+              <option value="Cash">Cash</option>
+              <option value="Card">Card</option>
+            </select>
+            <!-- Export -->
+            <button class="btn-secondary" onclick="exportCSV()">📥 Export CSV</button>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table id="transactions-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Title</th>
+                <th>Amount</th>
+                <th>Category</th>
+                <th>Payment</th>
+                <th>Date</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="transactions-tbody">
+              <!-- Populated by script.js -->
+            </tbody>
+          </table>
+          <div class="table-empty hidden" id="table-empty">
+            <span>📭</span>
+            <p>No transactions found.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════
+         SECTION 3 – CATEGORIES
+    ═══════════════════════════════════════ -->
+    <section id="section-categories" class="section">
+      <div class="glass-card">
+        <div class="section-header">
+          <h2>Manage Categories</h2>
+          <button class="btn-primary" onclick="openAddCategoryModal()">➕ New Category</button>
+        </div>
+        <div class="categories-grid" id="categories-grid">
+          <!-- Populated by script.js -->
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════
+         SECTION 4 – CHAT GUIDE
+    ═══════════════════════════════════════ -->
+    <section id="section-chat" class="section">
+      <div class="glass-card chat-guide-card">
+        <h2 class="card-title" style="font-size:1.3rem">📖 Command Reference</h2>
+        <p class="card-subtitle">All commands supported by the ChatSpend Bot. Click 💬 in the bottom-right to start chatting.</p>
+
+        <div class="guide-grid">
+          <div class="guide-group">
+            <h4>💸 Log Expense</h4>
+            <ul>
+              <li><code>spent 200 on pizza</code></li>
+              <li><code>paid 50 for uber via cash</code></li>
+              <li><code>spent 30 on coffee using card</code></li>
+            </ul>
+          </div>
+          <div class="guide-group">
+            <h4>🎯 Budget</h4>
+            <ul>
+              <li><code>set budget 5000</code></li>
+              <li><code>my budget is 10000</code></li>
+            </ul>
+          </div>
+          <div class="guide-group">
+            <h4>🏷️ Categories</h4>
+            <ul>
+              <li><code>add category Gym</code></li>
+              <li><code>create category Travel</code></li>
+            </ul>
+          </div>
+          <div class="guide-group">
+            <h4>✏️ Delete &amp; Undo</h4>
+            <ul>
+              <li><code>delete pizza</code></li>
+              <li><code>delete last</code></li>
+              <li><code>undo</code></li>
+            </ul>
+          </div>
+          <div class="guide-group">
+            <h4>🔍 Search</h4>
+            <ul>
+              <li><code>search pizza</code></li>
+              <li><code>find coffee</code></li>
+            </ul>
+          </div>
+          <div class="guide-group">
+            <h4>📊 Reports</h4>
+            <ul>
+              <li><code>show summary</code></li>
+              <li><code>show all transactions</code></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="guide-note">
+          <strong>💡 Payment:</strong> UPI (default), Cash, Card<br/>
+          <strong>📅 Date:</strong> Today’s date used automatically<br/>
+          <strong>🤖 Category:</strong> Auto-detected from item name
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ───────────── MODALS ───────────── -->
+
+  <!-- Budget Modal -->
+  <div class="modal-overlay hidden" id="modal-budget">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Set Monthly Budget</h3>
+        <button class="modal-close" onclick="closeModal('modal-budget')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="budget-input">Budget Amount (₹)</label>
+          <input type="number" id="budget-input" placeholder="e.g. 5000" min="1" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('modal-budget')">Cancel</button>
+        <button class="btn-primary" onclick="saveBudget()">Save Budget</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Transaction Modal -->
+  <div class="modal-overlay hidden" id="modal-edit">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Edit Transaction</h3>
+        <button class="modal-close" onclick="closeModal('modal-edit')">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="edit-id" />
+        <div class="form-group">
+          <label for="edit-amount">Amount (₹)</label>
+          <input type="number" id="edit-amount" min="1" />
+        </div>
+        <div class="form-group">
+          <label for="edit-title">Title</label>
+          <input type="text" id="edit-title" />
+        </div>
+        <div class="form-group">
+          <label for="edit-category">Category</label>
+          <select id="edit-category"></select>
+        </div>
+        <div class="form-group">
+          <label for="edit-payment">Payment Method</label>
+          <select id="edit-payment">
+            <option value="UPI">UPI</option>
+            <option value="Cash">Cash</option>
+            <option value="Card">Card</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('modal-edit')">Cancel</button>
+        <button class="btn-primary" onclick="saveEditTransaction()">Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete Confirm Modal -->
+  <div class="modal-overlay hidden" id="modal-delete">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h3>Confirm Delete</h3>
+        <button class="modal-close" onclick="closeModal('modal-delete')">✕</button>
+      </div>
+      <div class="modal-body">
+        <p id="delete-confirm-message">Are you sure you want to delete this transaction?</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('modal-delete')">Cancel</button>
+        <button class="btn-danger" id="btn-confirm-delete" onclick="confirmDelete()">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Category Modal -->
+  <div class="modal-overlay hidden" id="modal-category">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h3>Add Custom Category</h3>
+        <button class="modal-close" onclick="closeModal('modal-category')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="new-cat-name">Category Name</label>
+          <input type="text" id="new-cat-name" placeholder="e.g. Gym" />
+        </div>
+        <div class="form-group">
+          <label for="new-cat-keywords">Keywords (comma-separated, optional)</label>
+          <input type="text" id="new-cat-keywords" placeholder="e.g. gym,workout,fitness" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('modal-category')">Cancel</button>
+        <button class="btn-primary" onclick="saveCategory()">Add Category</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Category Modal -->
+  <div class="modal-overlay hidden" id="modal-edit-category">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h3>✏️ Edit Category</h3>
+        <button class="modal-close" onclick="closeModal('modal-edit-category')">&#x2715;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="edit-cat-name">Category Name</label>
+          <input type="text" id="edit-cat-name" placeholder="e.g. Gym" />
+        </div>
+        <div class="form-group">
+          <label for="edit-cat-keywords">Keywords (comma-separated)</label>
+          <input type="text" id="edit-cat-keywords" placeholder="e.g. gym,workout,fitness" />
+        </div>
+        <p style="font-size:0.78rem;color:var(--text-muted);margin-top:0.25rem">
+          ℹ️ Existing transactions will be updated to the new name.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('modal-edit-category')">Cancel</button>
+        <button class="btn-primary" onclick="saveEditCategory()">Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div class="toast hidden" id="toast"></div>
+
+  <!-- ───────────── FLOATING CHATBOT ───────────── -->
+
+  <!-- Chat Panel (slides up above FAB) -->
+  <div class="chatbot-panel hidden" id="chatbot-panel">
+    <div class="chatbot-panel-header">
+      <div class="chatbot-panel-title">
+        <span>🤖</span>
+        <span>ChatSpend Bot</span>
+      </div>
+      <button class="chatbot-panel-close" onclick="toggleChatbot()" title="Close">✕</button>
+    </div>
+
+    <div class="local-chat-messages" id="local-chat-messages">
+      <div class="lc-msg lc-msg-bot">
+        <span class="lc-avatar">🤖</span>
+        <div class="lc-bubble">
+          Hi! I’m ChatSpend Bot.<br/>
+          Try:<br/>
+          <em>“spent 200 on pizza”</em><br/>
+          <em>“set budget 5000”</em><br/>
+          <em>“show summary”</em>
+        </div>
+      </div>
+    </div>
+
+    <div class="local-chat-input-row">
+      <input
+        type="text"
+        id="local-chat-input"
+        placeholder='e.g. "spent 200 on pizza"'
+        onkeydown="handleLocalChatKey(event)"
+        autocomplete="off"
+      />
+      <button class="btn-primary" onclick="sendLocalChat()">➤</button>
+    </div>
+  </div>
+
+  <!-- FAB Button -->
+  <button class="chatbot-fab" id="chatbot-fab" onclick="toggleChatbot()" title="ChatSpend Bot">
+    <span class="fab-icon-open">💬</span>
+    <span class="fab-icon-close hidden">✕</span>
+    <span class="fab-badge" id="fab-badge"></span>
+  </button>
+
+  <!-- Main JavaScript -->
+  <script src="script.js"></script>
+</body>
+</html>
