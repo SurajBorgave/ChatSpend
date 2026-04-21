@@ -224,6 +224,29 @@ function currentMonthKey() {
   return `${months[d.getMonth()]}-${d.getFullYear()}`;
 }
 
+/**
+ * Convert an HTML date input value (yyyy-mm-dd, local) to app date + month key.
+ * @param {string} iso - value from input type="date"
+ * @returns {{ date: string, month: string } | null} null if empty/invalid
+ */
+function spendDateFromHtmlDateInput(iso) {
+  const raw = (iso || '').trim();
+  if (!raw) return null;
+  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const y = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10);
+  const day = parseInt(m[3], 10);
+  const dt = new Date(y, mo - 1, day);
+  if (Number.isNaN(dt.getTime())) return null;
+  if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== day) return null;
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return {
+    date: `${pad(dt.getDate())}-${pad(dt.getMonth() + 1)}-${dt.getFullYear()}`,
+    month: `${months[dt.getMonth()]}-${dt.getFullYear()}`,
+  };
+}
+
 function pad(n) { return String(n).padStart(2, '0'); }
 
 function normalizeCategoryName(value) {
@@ -1318,10 +1341,17 @@ async function handleQuickAdd(e) {
   const title = document.getElementById('qa-title').value.trim();
   const category = document.getElementById('qa-category').value || detectCategory(title);
   const payment = document.getElementById('qa-payment').value;
+  const dateIso = document.getElementById('qa-date').value.trim();
+  const when = dateIso ? spendDateFromHtmlDateInput(dateIso) : null;
+  if (dateIso && !when) { showToast('Please enter a valid date'); return; }
 
   if (isNaN(amount) || amount < 1 || !title) { showToast('Please fill in amount and title'); return; }
 
   const payload = { amount, title, category, payment };
+  if (when) {
+    payload.date = when.date;
+    payload.month = when.month;
+  }
 
   // Add to local state ONCE (fixes double-add bug)
   const tx = addTransaction(payload);
@@ -1357,8 +1387,9 @@ async function handleQuickAdd(e) {
 
   // Show confirmation
   const lastAdded = document.getElementById('last-added');
+  const dateNote = when ? ` on ${when.date}` : '';
   document.getElementById('last-added-text').textContent =
-    `Added ₹${tx.amount} for ${tx.title} (${tx.category} via ${tx.payment})`;
+    `Added ₹${tx.amount} for ${tx.title} (${tx.category} via ${tx.payment})${dateNote}`;
   lastAdded.classList.remove('hidden');
 
   // Reset form
