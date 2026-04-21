@@ -500,7 +500,10 @@ function parseAmountValue(value) {
   // Remove currency symbols, commas, and non-number clutter.
   const cleaned = raw.replace(/[^0-9.\-]/g, '');
   const num = parseFloat(cleaned);
-  return Number.isFinite(num) ? num : NaN;
+  if (!Number.isFinite(num)) return NaN;
+  // Guard against accidentally parsing IDs/timestamps as amounts.
+  if (num < 0 || num > 10000000) return NaN;
+  return num;
 }
 
 function getMonthKeyFromTransactionRow(tx) {
