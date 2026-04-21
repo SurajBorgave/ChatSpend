@@ -128,7 +128,11 @@ function doPost(e) {
   } catch (err) {
     Logger.log('doPost ERROR: ' + err.toString());
     return ContentService
-      .createTextOutput(JSON.stringify({ fulfillmentText: 'ERROR: ' + err.message }))
+      .createTextOutput(JSON.stringify({
+        success: false,
+        error: err.message || String(err),
+        fulfillmentText: 'ERROR: ' + err.message,
+      }))
       .setMimeType(ContentService.MimeType.JSON);
   }
 }
@@ -288,8 +292,9 @@ function jsonReply(text) {
 
 function handleDirectAction(body) {
   let result = {};
+  const actionKey = (body.action || '').toString().trim().toLowerCase();
 
-  switch (body.action) {
+  switch (actionKey) {
     case 'addExpense':
       result = directAddExpense(body);
       break;

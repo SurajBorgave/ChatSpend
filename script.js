@@ -466,9 +466,13 @@ async function callBackend(action, payload = {}, options = {}) {
   }
 
   try {
+    // Use text/plain (not application/json) so the browser treats this as a
+    // "simple" request and skips CORS preflight. Apps Script /exec often
+    // responds 405 to OPTIONS, which would block application/json POSTs from
+    // the website while the same URL still works from curl/Node.
     const res = await fetch(BACKEND_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'text/plain' },
       body: JSON.stringify({ action, ...payload }),
     });
     if (!res.ok) throw new Error('Network error');
