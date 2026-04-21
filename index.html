@@ -470,9 +470,42 @@
       --df-messenger-chat-border-radius: 16px;
       --df-messenger-chat-window-box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
 
-      /* Keep old-compatible vars too */
+      /* Legacy compatibility vars */
       --df-messenger-chat-background-color: #0f0f1a;
       --df-messenger-font-color: #f1f5f9;
+    }
+
+    /* Make chatbot follow app light theme */
+    body.light-theme df-messenger {
+      /* Launcher + header */
+      --df-messenger-button-titlebar-color: #7c3aed;
+      --df-messenger-button-titlebar-font-color: #ffffff;
+      --df-messenger-chat-titlebar-background: #7c3aed;
+      --df-messenger-chat-titlebar-font-color: #ffffff;
+
+      /* Chat panel surface */
+      --df-messenger-chat-background-color: #f8faff;
+      --df-messenger-font-color: #1e1b4b;
+
+      /* Message bubbles */
+      --df-messenger-user-message: #7c3aed;
+      --df-messenger-user-message-font-color: #ffffff;
+      --df-messenger-bot-message: #ffffff;
+      --df-messenger-bot-message-font-color: #1e1b4b;
+
+      /* Input area */
+      --df-messenger-input-box-color: #ffffff;
+      --df-messenger-input-font-color: #1e1b4b;
+      --df-messenger-input-placeholder-font-color: #7c71b5;
+      --df-messenger-send-icon: #7c3aed;
+
+      /* Chips/buttons */
+      --df-messenger-chip-background: rgba(124, 58, 237, 0.12);
+      --df-messenger-chip-font-color: #5b21b6;
+      --df-messenger-chip-border-color: rgba(124, 58, 237, 0.28);
+
+      /* Widget container */
+      --df-messenger-chat-window-box-shadow: 0 12px 30px rgba(124, 58, 237, 0.16);
     }
   </style>
 
