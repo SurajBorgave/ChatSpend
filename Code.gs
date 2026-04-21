@@ -470,13 +470,17 @@ function handleSummary() {
   const month   = getCurrentMonthKey();
   const budget  = getBudgetForMonth(month);
   const txs     = getAllTransactions().filter(t => getMonthKeyFromTransactionRow(t) === month);
-  const spent   = txs.reduce((s, t) => s + parseFloat(t[2] || 0), 0);
+  const validTxs = txs.filter(t => Number.isFinite(parseAmountValue(t[2])));
+  const spent   = validTxs.reduce((s, t) => s + parseAmountValue(t[2]), 0);
   const remaining = budget - spent;
-  const count   = txs.length;
+  const count   = validTxs.length;
 
   // Category breakdown
   const catMap = {};
-  txs.forEach(t => { const c = t[3]; catMap[c] = (catMap[c] || 0) + parseFloat(t[2]); });
+  validTxs.forEach(t => {
+    const c = (t[3] || 'Others').toString().trim() || 'Others';
+    catMap[c] = (catMap[c] || 0) + parseAmountValue(t[2]);
+  });
   const catLines = Object.entries(catMap).map(([k, v]) => `  • ${k}: ₹${v.toFixed(0)}`);
 
   let reply = `📊 *${month} Summary*\n`;
@@ -487,6 +491,16 @@ function handleSummary() {
   if (spent > budget && budget > 0) reply += `\n\n⚠️ You've exceeded your budget!`;
 
   return { reply };
+}
+
+function parseAmountValue(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : NaN;
+  const raw = (value || '').toString().trim();
+  if (!raw) return NaN;
+  // Remove currency symbols, commas, and non-number clutter.
+  const cleaned = raw.replace(/[^0-9.\-]/g, '');
+  const num = parseFloat(cleaned);
+  return Number.isFinite(num) ? num : NaN;
 }
 
 function getMonthKeyFromTransactionRow(tx) {
