@@ -294,35 +294,36 @@ function handleDirectAction(body) {
   let result = {};
   const actionKey = (body.action || '').toString().trim().toLowerCase();
 
+  // Case labels must be lowercase: actionKey is normalized with .toLowerCase().
   switch (actionKey) {
-    case 'addExpense':
+    case 'addexpense':
       result = directAddExpense(body);
       break;
-    case 'updateExpense':
+    case 'updateexpense':
       result = directUpdateExpense(body);
       break;
-    case 'deleteExpense':
+    case 'deleteexpense':
       result = directDeleteExpense(body);
       break;
-    case 'deleteLast':
+    case 'deletelast':
       result = directDeleteLast();
       break;
     case 'setbudget':
       result = directSetBudget(body);
       break;
-    case 'addCategory':
+    case 'addcategory':
       result = directAddCategory(body);
       break;
-    case 'deleteCategory':
+    case 'deletecategory':
       result = directDeleteCategory(body);
       break;
-    case 'updateCategory':
+    case 'updatecategory':
       result = directUpdateCategory(body);
       break;
-    case 'getAll':
+    case 'getall':
       result = { success: true, transactions: getAllTransactions() };
       break;
-    case 'getState':
+    case 'getstate':
       result = {
         success: true,
         transactions: getAllTransactions().map(rowToTransactionObject),
@@ -1134,8 +1135,12 @@ function getAllCategoryNames() {
    ============================================================ */
 
 function directAddExpense(body) {
+  const amount = parseFloat(body.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return { success: false, error: 'Invalid or missing amount' };
+  }
   const id = addTransactionToSheet({
-    amount:   body.amount,
+    amount,
     title:    body.title,
     category: body.category || detectCategory(body.title),
     payment:  body.payment  || 'UPI',
