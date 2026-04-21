@@ -579,6 +579,11 @@ function getSheet(name) {
   return ss.getSheetByName(name) || ss.insertSheet(name);
 }
 
+function getDataStartIndexByHeader(firstCellValue, expectedHeaderLabel) {
+  const first = (firstCellValue || '').toString().trim().toLowerCase();
+  return first === expectedHeaderLabel.toLowerCase() ? 1 : 0;
+}
+
 /** Initialize sheets with headers (run this once manually) */
 function setupSheets() {
   const txSheet   = getSheet(SHEETS.TRANSACTIONS);
@@ -612,8 +617,9 @@ function addTransactionToSheet({ amount, title, category, payment, date, month }
 function getAllTransactions() {
   const sheet = getSheet(SHEETS.TRANSACTIONS);
   const data  = sheet.getDataRange().getValues();
-  if (data.length <= 1) return [];
-  return data.slice(1).reverse(); // skip header, newest first
+  if (data.length === 0) return [];
+  const start = getDataStartIndexByHeader(data[0][0], 'ID');
+  return data.slice(start).reverse(); // newest first
 }
 
 /** Search transactions by title (partial match) */
@@ -670,7 +676,8 @@ function updateTransactionById(id, changes) {
 function setBudgetInSheet(month, amount) {
   const sheet = getSheet(SHEETS.BUDGET);
   const data  = sheet.getDataRange().getValues();
-  for (let i = 1; i < data.length; i++) {
+  const start = data.length ? getDataStartIndexByHeader(data[0][0], 'Month') : 0;
+  for (let i = start; i < data.length; i++) {
     if (data[i][0] === month) {
       sheet.getRange(i + 1, 2).setValue(amount);
       return;
@@ -683,7 +690,9 @@ function setBudgetInSheet(month, amount) {
 function getBudgetForMonth(month) {
   const sheet = getSheet(SHEETS.BUDGET);
   const data  = sheet.getDataRange().getValues();
-  for (let i = 1; i < data.length; i++) {
+  if (data.length === 0) return 0;
+  const start = getDataStartIndexByHeader(data[0][0], 'Month');
+  for (let i = start; i < data.length; i++) {
     if (data[i][0] === month) return parseFloat(data[i][1]) || 0;
   }
   return 0;
