@@ -454,7 +454,8 @@ function getMonthlySpent() {
  * @param {object} payload - data to send
  * @returns {Promise<object>} response or local result
  */
-async function callBackend(action, payload = {}) {
+async function callBackend(action, payload = {}, options = {}) {
+  const { fallbackToLocal = true } = options;
   if (!BACKEND_URL) {
     // Pure localStorage mode
     return handleLocalAction(action, payload);
@@ -470,7 +471,10 @@ async function callBackend(action, payload = {}) {
     return await res.json();
   } catch (err) {
     console.warn('Backend unavailable, using localStorage:', err.message);
-    return handleLocalAction(action, payload);
+    if (fallbackToLocal) {
+      return handleLocalAction(action, payload);
+    }
+    return { success: false, error: err.message || 'Backend unavailable' };
   }
 }
 
@@ -828,7 +832,7 @@ async function saveBudget() {
   // Update local state first (immediate UI), then sync backend if configured
   state.budget[currentMonthKey()] = amt;
   saveState();
-  if (BACKEND_URL) callBackend('setbudget', { amount: amt, month: currentMonthKey() }).catch(() => { });
+  if (BACKEND_URL) callBackend('setbudget', { amount: amt, month: currentMonthKey() }, { fallbackToLocal: false }).catch(() => { });
 
   closeModal('modal-budget');
   renderDashboard();
@@ -873,7 +877,7 @@ async function saveEditTransaction() {
   // Update local state first (immediate UI)
   updateTransaction(id, changes);
   // Sync to backend if configured
-  if (BACKEND_URL) callBackend('updateExpense', { id, changes }).catch(() => { });
+  if (BACKEND_URL) callBackend('updateExpense', { id, changes }, { fallbackToLocal: false }).catch(() => { });
 
   closeModal('modal-edit');
   renderDashboard();
@@ -901,7 +905,7 @@ async function confirmDelete() {
   // Delete from local state first (immediate UI update)
   deleteTransaction(id);
   // Sync to backend if configured
-  if (BACKEND_URL) callBackend('deleteExpense', { id }).catch(() => { });
+  if (BACKEND_URL) callBackend('deleteExpense', { id }, { fallbackToLocal: false }).catch(() => { });
 
   closeModal('modal-delete');
   renderDashboard();
@@ -930,7 +934,7 @@ async function saveCategory() {
     saveState();
   }
   // Sync to backend if configured
-  if (BACKEND_URL) callBackend('addCategory', { name, keywords: kws }).catch(() => { });
+  if (BACKEND_URL) callBackend('addCategory', { name, keywords: kws }, { fallbackToLocal: false }).catch(() => { });
 
   closeModal('modal-category');
   renderCategoriesGrid();
@@ -1054,7 +1058,7 @@ async function handleQuickAdd(e) {
   // Add to local state ONCE (fixes double-add bug)
   const tx = addTransaction(payload);
   // Sync to backend if configured (fire-and-forget)
-  if (BACKEND_URL) callBackend('addExpense', payload).catch(() => { });
+  if (BACKEND_URL) callBackend('addExpense', payload, { fallbackToLocal: false }).catch(() => { });
 
   // Show confirmation
   const lastAdded = document.getElementById('last-added');
