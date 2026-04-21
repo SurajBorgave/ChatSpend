@@ -957,11 +957,35 @@ function normalizeSingleSheet(sheet, expectedHeaders) {
   }
 }
 
-/** Add a transaction row */
+/**
+ * Add a transaction row aligned to the sheet header map.
+ * Always builds a dense row (no holes/undefined) — sparse arrays or
+ * undefined passed to appendRow can shift columns so Amount is blank and
+ * values appear under Category as "dates" (numbers with date formatting).
+ */
 function addTransactionToSheet({ amount, title, category, payment, date, month }) {
-  const id        = 'tx_' + new Date().getTime();
+  const sheet = getSheet(SHEETS.TRANSACTIONS);
+  const { data, map } = getTransactionRowsWithMap(sheet);
+  const id = 'tx_' + new Date().getTime();
   const timestamp = new Date().toISOString();
-  getSheet(SHEETS.TRANSACTIONS).appendRow([id, title, amount, category, payment, date, month, timestamp]);
+  const amt = parseFloat(amount);
+  const safeAmount = Number.isFinite(amt) && amt > 0 ? amt : 0;
+
+  const headerWidth = (data[0] && data[0].length) ? data[0].length : 0;
+  const numCols = Math.max(8, headerWidth);
+  const row = [];
+  for (let c = 0; c < numCols; c++) row.push('');
+
+  row[map.id] = id;
+  row[map.title] = capitalizeWords(String(title || 'Unnamed').trim()) || 'Unnamed';
+  row[map.amount] = safeAmount;
+  row[map.category] = String(category || 'Others').trim() || 'Others';
+  row[map.payment] = String(payment || 'UPI').trim() || 'UPI';
+  row[map.date] = String(date || getTodayDDMMYYYY());
+  row[map.month] = String(month || getCurrentMonthKey());
+  row[map.timestamp] = String(timestamp);
+
+  sheet.appendRow(row);
   return id;
 }
 
