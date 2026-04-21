@@ -183,6 +183,7 @@ let state = {
 let undoBuffer = null;
 const recentChatEventSignatures = new Map();
 const CHAT_EVENT_DEDUPE_WINDOW_MS = 12000;
+const pendingCategorySync = new Set();
 
 /* ============================================================
    STORAGE HELPERS
@@ -280,6 +281,7 @@ function detectCategory(text) {
     c => c.name.toLowerCase() === newCatName.toLowerCase()
   );
   if (!alreadyExists && newCatName.length >= 2) {
+    const keywordString = lower;
     state.customCategories.push({
       name: newCatName,
       keywords: [lower],      // add the full phrase as a keyword for future matches
@@ -287,6 +289,8 @@ function detectCategory(text) {
       autoCreated: true,      // flag as auto-created
     });
     saveState();
+    // Keep backend category sheet aligned with local auto-created categories.
+    syncCategoryToBackend(newCatName, keywordString);
   }
   return newCatName;
 }
@@ -505,8 +509,48 @@ function normalizeTransactionObject(tx) {
   };
 }
 
+function normalizeCategoryObject(c) {
+  return {
+    name: capitalize((c?.name || '').toString().trim()),
+    keywords: Array.isArray(c?.keywords)
+      ? c.keywords.map(k => (k || '').toString().trim().toLowerCase()).filter(Boolean)
+      : [],
+    icon: c?.icon || '🏷️',
+  };
+}
+
+function mergeCustomCategories(localCategories, backendCategories) {
+  const mergedMap = new Map();
+
+  const add = (cat) => {
+    const normalized = normalizeCategoryObject(cat);
+    if (!normalized.name) return;
+    const key = normalized.name.toLowerCase();
+    if (!mergedMap.has(key)) {
+      mergedMap.set(key, normalized);
+      return;
+    }
+    const existing = mergedMap.get(key);
+    const keywordSet = new Set([...(existing.keywords || []), ...(normalized.keywords || [])]);
+    existing.keywords = Array.from(keywordSet);
+    if ((!existing.icon || existing.icon === '🏷️') && normalized.icon) existing.icon = normalized.icon;
+    mergedMap.set(key, existing);
+  };
+
+  (backendCategories || []).forEach(add);
+  (localCategories || []).forEach(add);
+
+  return Array.from(mergedMap.values());
+}
+
 async function syncStateFromBackend() {
   if (!BACKEND_URL) return;
+  const localCategoriesBeforeSync = Array.isArray(state.customCategories)
+    ? JSON.parse(JSON.stringify(state.customCategories))
+    : [];
+  const localBudgetBeforeSync = (state.budget && typeof state.budget === 'object')
+    ? { ...state.budget }
+    : {};
   const res = await callBackend('getState', {}, { fallbackToLocal: false });
   if (!res || !res.success) return;
 
@@ -516,16 +560,35 @@ async function syncStateFromBackend() {
   }
 
   if (res.budget && typeof res.budget === 'object') {
-    state.budget = res.budget;
+    state.budget = { ...res.budget };
   }
 
+  let backendCategories = [];
   if (Array.isArray(res.categories)) {
-    state.customCategories = res.categories.map(c => ({
-      name: capitalize(c.name || ''),
-      keywords: Array.isArray(c.keywords) ? c.keywords : [],
-      icon: c.icon || '🏷️',
-    }));
+    backendCategories = res.categories.map(normalizeCategoryObject).filter(c => c.name);
   }
+  const mergedCategories = mergeCustomCategories(localCategoriesBeforeSync, backendCategories);
+  state.customCategories = mergedCategories;
+
+  // Backfill categories missing from backend so existing local custom categories
+  // also appear in the Google Sheet.
+  const backendNameSet = new Set(backendCategories.map(c => c.name.toLowerCase()));
+  mergedCategories.forEach(cat => {
+    if (!backendNameSet.has(cat.name.toLowerCase())) {
+      syncCategoryToBackend(cat.name, (cat.keywords || []).join(','));
+    }
+  });
+
+  // Backfill budgets missing from backend (common when budget was set locally first).
+  const backendBudgetKeys = new Set(Object.keys(state.budget || {}));
+  Object.entries(localBudgetBeforeSync || {}).forEach(([monthKey, amount]) => {
+    const amt = parseFloat(amount);
+    if (!monthKey || Number.isNaN(amt) || amt <= 0) return;
+    if (backendBudgetKeys.has(monthKey)) return;
+    callBackend('setbudget', { amount: amt, month: monthKey }, { fallbackToLocal: false }).catch(() => {});
+    state.budget[monthKey] = amt;
+    backendBudgetKeys.add(monthKey);
+  });
 
   saveState();
 }
@@ -537,6 +600,16 @@ async function refreshUiFromBackendIfAvailable() {
   } catch (_) {
     // keep current local state if sync fails
   }
+}
+
+function syncCategoryToBackend(name, keywords = '') {
+  if (!BACKEND_URL || !name) return;
+  const key = name.toLowerCase();
+  if (pendingCategorySync.has(key)) return;
+  pendingCategorySync.add(key);
+  callBackend('addCategory', { name, keywords }, { fallbackToLocal: false })
+    .catch(() => {})
+    .finally(() => pendingCategorySync.delete(key));
 }
 
 /** Handle all actions locally (localStorage-only mode) */
