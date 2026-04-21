@@ -87,16 +87,16 @@ function doPost(e) {
       let reply = '';
       let customPayload = null;
 
-      if      (intent.includes('AddExpense')    || intent.includes('Expense.add'))      { ({ reply, customPayload } = handleAddExpense(params, queryText)); }
-      else if (intent.includes('SetBudget')     || intent.includes('Budget.set'))       { ({ reply, customPayload } = handleSetBudget(params)); }
-      else if (intent.includes('AddCategory')   || intent.includes('Category.add'))     { ({ reply, customPayload } = handleAddCategory(params)); }
-      else if (intent.includes('DeleteExpense') || intent.includes('Expense.delete'))   { ({ reply, customPayload } = handleDeleteExpense(params, queryText)); }
-      else if (intent.includes('UpdateExpense') || intent.includes('Expense.update'))   { ({ reply, customPayload } = handleUpdateExpense(params, queryText)); }
-      else if (intent.includes('Search')        || intent.includes('Expense.search'))   { ({ reply, customPayload } = handleSearch(params, queryText)); }
-      else if (intent.includes('Summary')       || intent.includes('Report'))           { ({ reply, customPayload } = handleSummary()); }
+      if      (intent.includes('AddExpense')    || intent.includes('Expense.add') || intent.toLowerCase() === 'log_expense')      { ({ reply, customPayload } = handleAddExpense(params, queryText)); }
+      else if (intent.includes('SetBudget')     || intent.includes('Budget.set') || intent.toLowerCase() === 'setbudget')       { ({ reply, customPayload } = handleSetBudget(params)); }
+      else if (intent.includes('AddCategory')   || intent.includes('Category.add') || intent.toLowerCase() === 'addcategory')     { ({ reply, customPayload } = handleAddCategory(params)); }
+      else if (intent.includes('DeleteExpense') || intent.includes('Expense.delete') || intent.toLowerCase() === 'deleteexpense')   { ({ reply, customPayload } = handleDeleteExpense(params, queryText)); }
+      else if (intent.includes('UpdateExpense') || intent.includes('Expense.update') || intent.toLowerCase() === 'updateexpense')   { ({ reply, customPayload } = handleUpdateExpense(params, queryText)); }
+      else if (intent.includes('Search')        || intent.includes('Expense.search') || intent.toLowerCase() === 'searchexpense')   { ({ reply, customPayload } = handleSearch(params, queryText)); }
+      else if (intent.includes('Summary')       || intent.includes('Report') || intent.toLowerCase() === 'showsummary')           { ({ reply, customPayload } = handleSummary()); }
       else if (intent.includes('ShowAll')       || intent.includes('Expense.show'))     { ({ reply, customPayload } = handleShowAll()); }
-      else if (intent.includes('Undo')          || intent.includes('Expense.undo'))     { ({ reply, customPayload } = handleUndo()); }
-      else if (intent.includes('ShowFilter')    || intent.includes('Expense.filter'))   { ({ reply, customPayload } = handleFilter(params, queryText)); }
+      else if (intent.includes('Undo')          || intent.includes('Expense.undo') || intent.toLowerCase() === 'undolast')     { ({ reply, customPayload } = handleUndo()); }
+      else if (intent.includes('ShowFilter')    || intent.includes('Expense.filter') || intent.toLowerCase() === 'showfilter')   { ({ reply, customPayload } = handleFilter(params, queryText)); }
       else {
         reply = "I didn't understand that. Try: 'spent 50 on coffee', 'set budget 5000', or 'show summary'.";
       }
@@ -140,6 +140,20 @@ function handleWebsiteMessage(text) {
   try {
     const raw   = text.trim();
     const lower = raw.toLowerCase();
+
+    // ── Help / Commands ─────────────────────────────────────────────
+    if (/^help$|^commands$|what can you do|how to use|usage/.test(lower)) {
+      return jsonReply(
+        '🤖 Here are useful commands:\n' +
+        '• "spent 200 on pizza"\n' +
+        '• "spent 120 yesterday on tea"\n' +
+        '• "spent 450 on groceries on 18/04/2026"\n' +
+        '• "set budget 5000"\n' +
+        '• "update last to 250"\n' +
+        '• "delete last"\n' +
+        '• "show summary"'
+      );
+    }
 
     // ── Set Budget ─────────────────────────────────────────────────
     if (/set\s+budget|budget\s+is|my\s+budget|budget\s+of/.test(lower)) {
@@ -216,22 +230,22 @@ function handleWebsiteMessage(text) {
     if (amountMatch) {
       const amount = parseFloat(amountMatch[1]);
 
-      // Try to extract item: "on X", "for X", "of X"
-      const itemMatch = raw.match(/(?:on|for|of)\s+([a-zA-Z][a-zA-Z0-9\s]*?)(?:\s+(?:via|using|by|through|with)|$)/i);
-      const item      = itemMatch ? itemMatch[1].trim() : null;
+      // Try to extract item naturally from user text
+      const item = extractItemFromExpenseText(raw, amount);
+      const when = parseDateContextFromText(raw);
 
       if (amount > 0 && item) {
         const category = detectCategory(item);
         const payment  = detectPaymentFromText(lower);
         const title    = capitalizeWords(item);
-        const date     = getTodayDDMMYYYY();
-        const month    = getCurrentMonthKey();
+        const date     = when.date;
+        const month    = when.month;
 
         addTransactionToSheet({ amount, title, category, payment, date, month });
 
         return jsonReply(
           '✅ Added ₹' + amount + ' for ' + title +
-          '\n📂 ' + category + ' · 💳 ' + payment
+          '\n📂 ' + category + ' · 💳 ' + payment + ' · 📅 ' + date
         );
       }
 
@@ -322,8 +336,9 @@ function handleAddExpense(params, queryText) {
   const payment = detectPaymentFromText(queryText);
   const category = detectCategory(rawItem);
   const title   = capitalizeWords(rawItem || 'Unnamed');
-  const date    = getTodayDDMMYYYY();
-  const month   = getCurrentMonthKey();
+  const when    = parseDateContextFromText(queryText);
+  const date    = when.date;
+  const month   = when.month;
 
   if (!amount || amount <= 0) {
     return { reply: "⚠️ I couldn't detect an amount. Try: 'spent 200 on pizza'" };
@@ -399,9 +414,25 @@ function handleDeleteExpense(params, queryText) {
 function handleUpdateExpense(params, queryText) {
   const query   = (params['any'] || '').toString().trim();
   const amount  = parseFloat(params['number'] || 0);
+  const lower   = (queryText || '').toLowerCase();
 
-  if (!query || !amount) {
+  if (!amount) {
     return { reply: "⚠️ Try: 'update pizza to 300'" };
+  }
+
+  // Natural shortcut: "update last to 250"
+  if (/\blast\b|\brecent\b/.test(lower)) {
+    const all = getAllTransactions();
+    const last = all.find(t => t && t[0] && t[1]);
+    if (!last) return { reply: '⚠️ No valid transactions found to update.' };
+    updateTransactionById(last[0], { amount });
+    const safeTitle = last[1] || 'Untitled';
+    const reply = `✏️ Updated last transaction "${safeTitle}" to ₹${amount}`;
+    return { reply, customPayload: { action: 'expenseUpdated', data: { id: last[0], amount } } };
+  }
+
+  if (!query) {
+    return { reply: "⚠️ Try: 'update pizza to 300' or 'update last to 300'" };
   }
 
   const txs = searchTransactions(query);
@@ -462,6 +493,36 @@ function handleShowAll() {
 
   const lines = txs.map(t => `• ${t[1]} – ₹${t[2]} (${t[3]}, ${t[5]})`);
   return { reply: `📋 Last ${txs.length} transactions:\n${lines.join('\n')}` };
+}
+
+/**
+ * Extracts item title from common natural language expense phrases.
+ * Supports:
+ *  - "spent 200 on pizza"
+ *  - "paid 50 for uber via cash"
+ *  - "pizza 120"
+ */
+function extractItemFromExpenseText(text, amount) {
+  const raw = (text || '').trim();
+  if (!raw) return null;
+
+  // Pattern 1: explicit prepositions (on/for/of)
+  const direct = raw.match(/(?:on|for|of)\s+([a-zA-Z][a-zA-Z0-9\s&'._-]*?)(?:\s+(?:via|using|by|through|with|on)\b|$)/i);
+  if (direct && direct[1]) {
+    const val = direct[1].trim();
+    if (val) return val;
+  }
+
+  // Pattern 2: "pizza 120", "uber 50 cash"
+  const withoutAmount = raw.replace(new RegExp('\\b' + amount + '(?:\\.0+)?\\b', 'g'), ' ');
+  const cleaned = withoutAmount
+    .replace(/\b(spent|spend|paid|pay|add|added|expense|expenses|rs|inr|rupees?|via|using|by|through|with|cash|card|upi|today|yesterday)\b/gi, ' ')
+    .replace(/\b(on)\s+\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!cleaned) return null;
+  return cleaned.slice(0, 60).trim();
 }
 
 /** Handle Undo (restore last deleted) */
@@ -833,6 +894,39 @@ function getCurrentMonthKey() {
   const d = new Date();
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   return `${months[d.getMonth()]}-${d.getFullYear()}`;
+}
+
+/**
+ * Parses date context from natural language:
+ *  - "yesterday", "today"
+ *  - "on 18/04/2026", "18-04-2026"
+ * Falls back to current date.
+ */
+function parseDateContextFromText(text) {
+  const lower = (text || '').toLowerCase();
+  const now = new Date();
+  let d = new Date(now);
+
+  if (/\byesterday\b/.test(lower)) {
+    d.setDate(d.getDate() - 1);
+  } else if (!/\btoday\b/.test(lower)) {
+    const m = lower.match(/\b(?:on\s+)?(\d{1,2})[\/-](\d{1,2})(?:[\/-](\d{2,4}))?\b/);
+    if (m) {
+      const day = parseInt(m[1], 10);
+      const mon = parseInt(m[2], 10);
+      let year = m[3] ? parseInt(m[3], 10) : now.getFullYear();
+      if (year < 100) year += 2000;
+      const parsed = new Date(year, mon - 1, day);
+      if (!isNaN(parsed.getTime())) d = parsed;
+    }
+  }
+
+  const pad = n => String(n).padStart(2, '0');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return {
+    date: `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()}`,
+    month: `${months[d.getMonth()]}-${d.getFullYear()}`,
+  };
 }
 
 function capitalizeWords(str) {

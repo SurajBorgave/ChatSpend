@@ -1219,11 +1219,37 @@ function parseExpenseFromBotText(botText) {
     .trim();
   if (!title) return null;
 
+  // Optional date phrase in bot text/title, e.g. "groceries on 18/04/2026"
+  const dateMatch = (cleaned + ' ' + title).match(/\bon\s+(\d{1,2})[\/-](\d{1,2})(?:[\/-](\d{2,4}))?\b/i);
+  let parsedDate = null;
+  let parsedMonth = null;
+  if (dateMatch) {
+    const day = parseInt(dateMatch[1], 10);
+    const mon = parseInt(dateMatch[2], 10);
+    let year = dateMatch[3] ? parseInt(dateMatch[3], 10) : new Date().getFullYear();
+    if (year < 100) year += 2000;
+    const d = new Date(year, mon - 1, day);
+    if (!isNaN(d.getTime())) {
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      parsedDate = `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()}`;
+      parsedMonth = `${months[d.getMonth()]}-${d.getFullYear()}`;
+    }
+    title = title.replace(/\bon\s+\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?\b/i, '').trim();
+    title = title.replace(/\bon\s+\d{1,2}\b$/i, '').trim();
+  }
+
   const payMatch = cleaned.match(/\b(cash|card|upi)\b/i);
   const payment = payMatch ? capitalize(payMatch[1].toLowerCase()) : 'UPI';
   const category = detectCategory(title);
 
-  return { amount, title, category, payment };
+  return {
+    amount,
+    title,
+    category,
+    payment,
+    date: parsedDate || null,
+    month: parsedMonth || null,
+  };
 }
 
 document.addEventListener('df-response-received', async (event) => {
