@@ -75,8 +75,10 @@ function doPost(e) {
     // Accept message from any of the three common locations
     const queryText = (
       (body.queryResult && body.queryResult.queryText) ||
+      (body.originalDetectIntentRequest && body.originalDetectIntentRequest.payload && body.originalDetectIntentRequest.payload.text) ||
       body.message ||
       body.text ||
+      body.queryText ||
       ''
     ).toString().trim();
 
@@ -333,9 +335,10 @@ function handleDirectAction(body) {
 function handleAddExpense(params, queryText) {
   const amount  = parseFloat(params['number'] || params['amount'] || 0);
   const rawItem = (params['any'] || params['item'] || '').toString().trim();
+  const inferredItem = rawItem || extractItemFromExpenseText(queryText, amount) || '';
   const payment = detectPaymentFromText(queryText);
-  const category = detectCategory(rawItem);
-  const title   = capitalizeWords(rawItem || 'Unnamed');
+  const category = detectCategory(inferredItem);
+  const title   = capitalizeWords(inferredItem || 'Unnamed');
   const when    = parseDateContextFromText(queryText);
   const date    = when.date;
   const month   = when.month;
@@ -466,7 +469,7 @@ function handleSearch(params, queryText) {
 function handleSummary() {
   const month   = getCurrentMonthKey();
   const budget  = getBudgetForMonth(month);
-  const txs     = getAllTransactions().filter(t => t[7] === month); // col 7 = Month
+  const txs     = getAllTransactions().filter(t => t[6] === month); // col 6 = Month
   const spent   = txs.reduce((s, t) => s + parseFloat(t[2] || 0), 0);
   const remaining = budget - spent;
   const count   = txs.length;
