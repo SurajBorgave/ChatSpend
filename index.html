@@ -437,13 +437,42 @@
   <!-- Theme the Dialogflow bubble to match our purple design -->
   <style>
     df-messenger {
+      /* Launcher + header */
       --df-messenger-button-titlebar-color: #7c3aed;
-      --df-messenger-send-icon: #7c3aed;
-      --df-messenger-user-message: #7c3aed;
+      --df-messenger-button-titlebar-font-color: #ffffff;
+      --df-messenger-chat-titlebar-background: #7c3aed;
+      --df-messenger-chat-titlebar-font-color: #ffffff;
+
+      /* Chat panel surface */
       --df-messenger-chat-background-color: #0f0f1a;
-      --df-messenger-font-color: #ffffff;
+      --df-messenger-font-color: #f1f5f9;
+      --df-messenger-font-family: Inter, -apple-system, sans-serif;
+
+      /* Message bubbles */
+      --df-messenger-button-titlebar-color: #7c3aed;
+      --df-messenger-user-message: #7c3aed;
+      --df-messenger-bot-message: #1a1a2e;
+      --df-messenger-bot-message-font-color: #f1f5f9;
+      --df-messenger-user-message-font-color: #ffffff;
+
+      /* Input area */
       --df-messenger-input-box-color: #1a1a2e;
       --df-messenger-input-font-color: #ffffff;
+      --df-messenger-input-placeholder-font-color: #94a3b8;
+      --df-messenger-send-icon: #7c3aed;
+
+      /* Chips/buttons inside replies */
+      --df-messenger-chip-background: rgba(124, 58, 237, 0.2);
+      --df-messenger-chip-font-color: #c4b5fd;
+      --df-messenger-chip-border-color: rgba(124, 58, 237, 0.45);
+
+      /* Widget container */
+      --df-messenger-chat-border-radius: 16px;
+      --df-messenger-chat-window-box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+
+      /* Keep old-compatible vars too */
+      --df-messenger-chat-background-color: #0f0f1a;
+      --df-messenger-font-color: #f1f5f9;
     }
   </style>
 

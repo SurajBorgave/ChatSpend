@@ -317,23 +317,47 @@ function generateId() {
 }
 
 /** Add a new transaction */
-function addTransaction({ amount, title, category, payment = 'UPI', date = null, month = null }) {
+function addTransaction({ id = null, amount, title, category, payment = 'UPI', date = null, month = null, timestamp = null }) {
   const cat = category || detectCategory(title);
   const d = date || todayDDMMYYYY();
   const m = month || currentMonthKey();
   const tx = {
-    id: generateId(),
+    id: id || generateId(),
     amount: parseFloat(amount),
     title: capitalize(title || 'Unnamed'),
     category: cat,
     payment: payment || 'UPI',
     date: d,
     month: m,
-    timestamp: new Date().toISOString(),
+    timestamp: timestamp || new Date().toISOString(),
   };
   state.transactions.unshift(tx); // newest first
   saveState();
   return tx;
+}
+
+function hasEquivalentTransaction(candidate) {
+  if (!candidate) return false;
+
+  // Strong dedupe by explicit id (preferred when coming from backend payload).
+  if (candidate.id && state.transactions.some(t => t.id === candidate.id)) return true;
+
+  // Fallback dedupe by core fields when id is unavailable.
+  const amount = parseFloat(candidate.amount);
+  const title = capitalize(candidate.title || 'Unnamed');
+  const category = candidate.category || detectCategory(candidate.title || '');
+  const payment = candidate.payment || 'UPI';
+  const date = candidate.date || todayDDMMYYYY();
+  const month = candidate.month || currentMonthKey();
+
+  return state.transactions.some(t =>
+    t.amount === amount &&
+    t.title === title &&
+    t.category === category &&
+    t.payment === payment &&
+    t.date === date &&
+    t.month === month
+  );
 }
 
 /** Update a transaction by ID */
@@ -1089,25 +1113,68 @@ function applyTheme() {
  * If the bot returns a custom payload with { action, data },
  * we mirror that locally so the dashboard stays in sync.
  */
+function readDialogflowStructValue(node) {
+  if (!node || typeof node !== 'object') return node;
+  if (Object.prototype.hasOwnProperty.call(node, 'stringValue')) return node.stringValue;
+  if (Object.prototype.hasOwnProperty.call(node, 'numberValue')) return Number(node.numberValue);
+  if (Object.prototype.hasOwnProperty.call(node, 'boolValue')) return Boolean(node.boolValue);
+  if (Object.prototype.hasOwnProperty.call(node, 'nullValue')) return null;
+  if (Object.prototype.hasOwnProperty.call(node, 'listValue')) {
+    const values = Array.isArray(node.listValue?.values) ? node.listValue.values : [];
+    return values.map(readDialogflowStructValue);
+  }
+  if (Object.prototype.hasOwnProperty.call(node, 'structValue')) {
+    return readDialogflowStructValue(node.structValue);
+  }
+  if (Object.prototype.hasOwnProperty.call(node, 'fields')) {
+    const out = {};
+    Object.entries(node.fields).forEach(([k, v]) => {
+      out[k] = readDialogflowStructValue(v);
+    });
+    return out;
+  }
+  return node;
+}
+
+function normalizeDialogflowPayload(payload) {
+  if (!payload) return null;
+  const normalized = readDialogflowStructValue(payload);
+  return (normalized && typeof normalized === 'object') ? normalized : null;
+}
+
+function extractQueryResultFromEvent(event) {
+  // Dialogflow Messenger versions expose response data under different paths.
+  return (
+    event?.detail?.raw?.queryResult ||
+    event?.detail?.response?.queryResult ||
+    event?.detail?.queryResult ||
+    null
+  );
+}
+
 document.addEventListener('df-response-received', async (event) => {
   try {
-    const response = event.detail?.raw?.queryResult;
+    const response = extractQueryResultFromEvent(event);
     if (!response) return;
 
-    // Extract custom payload if present
-    const customPayload = response.fulfillmentMessages?.find(m => m.payload)?.payload;
+    // Extract custom payload if present (plain object or Struct-wrapped payload)
+    const rawPayload = response.fulfillmentMessages?.find(m => m.payload)?.payload || null;
+    const customPayload = normalizeDialogflowPayload(rawPayload);
 
     if (customPayload) {
       const { action, data } = customPayload;
 
       if (action === 'expenseAdded' && data) {
+        if (hasEquivalentTransaction(data)) return;
         addTransaction({
+          id: data.id || null,
           amount: data.amount,
           title: data.title,
           category: data.category,
           payment: data.payment,
           date: data.date,
           month: data.month,
+          timestamp: data.timestamp || null,
         });
         renderDashboard();
         showToast(`✅ ₹${data.amount} for ${data.title} logged via chat!`);
