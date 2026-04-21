@@ -181,6 +181,8 @@ let state = {
 
 // Undo buffer – stores last deleted transaction
 let undoBuffer = null;
+const recentChatEventSignatures = new Map();
+const CHAT_EVENT_DEDUPE_WINDOW_MS = 12000;
 
 /* ============================================================
    STORAGE HELPERS
@@ -222,6 +224,17 @@ function currentMonthKey() {
 }
 
 function pad(n) { return String(n).padStart(2, '0'); }
+
+function normalizeCategoryName(value) {
+  return capitalize((value || '').toString().trim());
+}
+
+function normalizePaymentMethod(value) {
+  const lower = (value || '').toString().trim().toLowerCase();
+  if (lower === 'cash') return 'Cash';
+  if (lower === 'card' || lower === 'debit' || lower === 'credit') return 'Card';
+  return 'UPI';
+}
 
 /* ============================================================
    CATEGORY ENGINE
@@ -318,7 +331,7 @@ function generateId() {
 
 /** Add a new transaction */
 function addTransaction({ id = null, amount, title, category, payment = 'UPI', date = null, month = null, timestamp = null }) {
-  const cat = category || detectCategory(title);
+  const cat = normalizeCategoryName(category || detectCategory(title));
   const d = date || todayDDMMYYYY();
   const m = month || currentMonthKey();
   const tx = {
@@ -326,7 +339,7 @@ function addTransaction({ id = null, amount, title, category, payment = 'UPI', d
     amount: parseFloat(amount),
     title: capitalize(title || 'Unnamed'),
     category: cat,
-    payment: payment || 'UPI',
+    payment: normalizePaymentMethod(payment),
     date: d,
     month: m,
     timestamp: timestamp || new Date().toISOString(),
@@ -345,19 +358,34 @@ function hasEquivalentTransaction(candidate) {
   // Fallback dedupe by core fields when id is unavailable.
   const amount = parseFloat(candidate.amount);
   const title = capitalize(candidate.title || 'Unnamed');
-  const category = candidate.category || detectCategory(candidate.title || '');
-  const payment = candidate.payment || 'UPI';
+  const category = normalizeCategoryName(candidate.category || detectCategory(candidate.title || ''));
+  const payment = normalizePaymentMethod(candidate.payment || 'UPI');
   const date = candidate.date || todayDDMMYYYY();
   const month = candidate.month || currentMonthKey();
 
   return state.transactions.some(t =>
     t.amount === amount &&
     t.title === title &&
-    t.category === category &&
-    t.payment === payment &&
+    normalizeCategoryName(t.category) === category &&
+    normalizePaymentMethod(t.payment) === payment &&
     t.date === date &&
     t.month === month
   );
+}
+
+function pruneRecentChatEventSignatures() {
+  const now = Date.now();
+  for (const [sig, ts] of recentChatEventSignatures.entries()) {
+    if (now - ts > CHAT_EVENT_DEDUPE_WINDOW_MS) recentChatEventSignatures.delete(sig);
+  }
+}
+
+function isDuplicateChatEvent(signature) {
+  if (!signature) return false;
+  pruneRecentChatEventSignatures();
+  if (recentChatEventSignatures.has(signature)) return true;
+  recentChatEventSignatures.set(signature, Date.now());
+  return false;
 }
 
 /** Update a transaction by ID */
@@ -1152,6 +1180,48 @@ function extractQueryResultFromEvent(event) {
   );
 }
 
+function extractBotTextFromQueryResult(queryResult) {
+  if (!queryResult) return '';
+  if (typeof queryResult.fulfillmentText === 'string' && queryResult.fulfillmentText.trim()) {
+    return queryResult.fulfillmentText.trim();
+  }
+  const msgs = Array.isArray(queryResult.fulfillmentMessages) ? queryResult.fulfillmentMessages : [];
+  for (const m of msgs) {
+    const txt = m?.text?.text;
+    if (Array.isArray(txt) && txt[0]) return String(txt[0]).trim();
+  }
+  return '';
+}
+
+function parseExpenseFromBotText(botText) {
+  if (!botText) return null;
+  const cleaned = botText.replace(/\n/g, ' ').trim();
+
+  // Examples handled:
+  // "Saved ₹20 for pepsi"
+  // "Added ₹250 for Pizza (Food via Cash)"
+  // "✅ Added ₹50 for uber"
+  const match = cleaned.match(/(?:saved|added|logged)[^\d₹]*₹?\s*([0-9]+(?:\.[0-9]+)?)\s+(?:for|on)\s+([a-zA-Z0-9][a-zA-Z0-9\s&'._-]*)/i);
+  if (!match) return null;
+
+  const amount = parseFloat(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+
+  // Stop title before common trailing fragments.
+  let title = match[2]
+    .replace(/\s*\(.*$/, '')
+    .replace(/\s*(via|using|by)\s+(cash|card|upi)\b.*$/i, '')
+    .replace(/[.!?]+$/, '')
+    .trim();
+  if (!title) return null;
+
+  const payMatch = cleaned.match(/\b(cash|card|upi)\b/i);
+  const payment = payMatch ? capitalize(payMatch[1].toLowerCase()) : 'UPI';
+  const category = detectCategory(title);
+
+  return { amount, title, category, payment };
+}
+
 document.addEventListener('df-response-received', async (event) => {
   try {
     const response = extractQueryResultFromEvent(event);
@@ -1160,6 +1230,16 @@ document.addEventListener('df-response-received', async (event) => {
     // Extract custom payload if present (plain object or Struct-wrapped payload)
     const rawPayload = response.fulfillmentMessages?.find(m => m.payload)?.payload || null;
     const customPayload = normalizeDialogflowPayload(rawPayload);
+    const botText = extractBotTextFromQueryResult(response);
+
+    // Messenger may fire equivalent response events more than once.
+    // Deduplicate events by stable signature in a short time window.
+    const payloadSignature = customPayload
+      ? JSON.stringify({ action: customPayload.action || '', data: customPayload.data || null })
+      : '';
+    const textSignature = botText ? `text:${botText.toLowerCase().trim()}` : '';
+    const signature = payloadSignature || textSignature;
+    if (isDuplicateChatEvent(signature)) return;
 
     if (customPayload) {
       const { action, data } = customPayload;
@@ -1203,6 +1283,18 @@ document.addEventListener('df-response-received', async (event) => {
         renderDashboard();
         renderTransactionsTable();
         showToast('🗑️ Transaction deleted via chat!');
+      }
+    }
+
+    // Fallback path: some Dialogflow responses contain only plain text (no custom payload).
+    // If bot confirms a save/add action, sync the expense locally from response text.
+    if (!customPayload) {
+      const parsed = parseExpenseFromBotText(botText);
+      if (parsed && !hasEquivalentTransaction(parsed)) {
+        const tx = addTransaction(parsed);
+        renderDashboard();
+        renderTransactionsTable();
+        showToast(`✅ ₹${tx.amount} for ${tx.title} logged via chat!`);
       }
     }
   } catch (err) {
