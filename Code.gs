@@ -678,13 +678,48 @@ function normalizeSingleSheet(sheet, expectedHeaders) {
   currentHeaders.forEach((h, i) => { idxMap[h.toLowerCase()] = i; });
 
   const outRows = [];
-  if (data.length > 1) {
-    for (let r = 1; r < data.length; r++) {
+  const hasRecognizedHeaders = expectedHeaders.some(h => idxMap[h.toLowerCase()] !== undefined);
+  const startRow = hasRecognizedHeaders ? 1 : 0;
+
+  if (data.length > startRow) {
+    for (let r = startRow; r < data.length; r++) {
       const row = data[r];
-      const reordered = expectedHeaders.map(h => {
-        const idx = idxMap[h.toLowerCase()];
-        return (idx !== undefined && idx < row.length) ? row[idx] : '';
-      });
+      let reordered;
+
+      // Legacy transactions format support: [Amount, Item, DateTime] with no headers.
+      if (
+        expectedHeaders.length === 8 &&
+        !hasRecognizedHeaders &&
+        row.length >= 2 &&
+        String(row[0] || '').trim() !== '' &&
+        String(row[1] || '').trim() !== ''
+      ) {
+        const amount = parseFloat(row[0]) || 0;
+        const title = capitalizeWords(String(row[1] || '').trim() || 'Unnamed');
+        const rawDate = String(row[2] || '').trim();
+        const parsedDate = parseDateContextFromText(rawDate || '');
+        const timestamp = new Date().toISOString();
+        const id = 'tx_migrated_' + Date.now() + '_' + r;
+        const category = detectCategory(title);
+        const payment = detectPaymentFromText(rawDate || '');
+
+        reordered = [
+          id,
+          title,
+          amount,
+          category,
+          payment || 'UPI',
+          parsedDate.date,
+          parsedDate.month,
+          timestamp,
+        ];
+      } else {
+        reordered = expectedHeaders.map(h => {
+          const idx = idxMap[h.toLowerCase()];
+          return (idx !== undefined && idx < row.length) ? row[idx] : '';
+        });
+      }
+
       // Keep only non-empty rows.
       if (reordered.some(v => String(v || '').trim() !== '')) outRows.push(reordered);
     }
