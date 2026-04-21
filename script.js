@@ -530,6 +530,15 @@ async function syncStateFromBackend() {
   saveState();
 }
 
+async function refreshUiFromBackendIfAvailable() {
+  if (!BACKEND_URL) return;
+  try {
+    await syncStateFromBackend();
+  } catch (_) {
+    // keep current local state if sync fails
+  }
+}
+
 /** Handle all actions locally (localStorage-only mode) */
 function handleLocalAction(action, payload) {
   switch (action) {
@@ -880,15 +889,34 @@ function openBudgetModal() {
 async function saveBudget() {
   const amt = parseFloat(document.getElementById('budget-input').value);
   if (isNaN(amt) || amt < 1) { showToast('Please enter a valid budget amount'); return; }
+  const monthKey = currentMonthKey();
+  const prev = state.budget[monthKey];
 
   // Update local state first (immediate UI), then sync backend if configured
-  state.budget[currentMonthKey()] = amt;
+  state.budget[monthKey] = amt;
   saveState();
-  if (BACKEND_URL) callBackend('setbudget', { amount: amt, month: currentMonthKey() }, { fallbackToLocal: false }).catch(() => { });
+  let backendFailed = false;
+  if (BACKEND_URL) {
+    try {
+      const res = await callBackend('setbudget', { amount: amt, month: monthKey }, { fallbackToLocal: false });
+      if (!res || !res.success) backendFailed = true;
+    } catch (_) {
+      backendFailed = true;
+    }
+  }
+  if (backendFailed) {
+    if (prev === undefined) delete state.budget[monthKey];
+    else state.budget[monthKey] = prev;
+    saveState();
+    renderDashboard();
+    showToast('⚠️ Budget update failed on backend. Restored previous value.');
+    return;
+  }
+  await refreshUiFromBackendIfAvailable();
 
   closeModal('modal-budget');
   renderDashboard();
-  showToast(`✅ Budget set to ₹${amt.toLocaleString('en-IN')} for ${currentMonthKey()}`);
+  showToast(`✅ Budget set to ₹${amt.toLocaleString('en-IN')} for ${monthKey}`);
 }
 
 /** Edit Transaction Modal */
@@ -925,11 +953,32 @@ async function saveEditTransaction() {
   if (!title || isNaN(amount) || amount < 1) { showToast('Please fill all fields correctly'); return; }
 
   const changes = { amount, title: capitalize(title), category, payment };
+  const idx = state.transactions.findIndex(t => t.id === id);
+  const prevTx = idx >= 0 ? { ...state.transactions[idx] } : null;
 
   // Update local state first (immediate UI)
   updateTransaction(id, changes);
   // Sync to backend if configured
-  if (BACKEND_URL) callBackend('updateExpense', { id, changes }, { fallbackToLocal: false }).catch(() => { });
+  let backendFailed = false;
+  if (BACKEND_URL) {
+    try {
+      const res = await callBackend('updateExpense', { id, changes }, { fallbackToLocal: false });
+      if (!res || !res.success) backendFailed = true;
+    } catch (_) {
+      backendFailed = true;
+    }
+  }
+  if (backendFailed) {
+    if (idx >= 0 && prevTx) {
+      state.transactions[idx] = prevTx;
+      saveState();
+    }
+    renderDashboard();
+    renderTransactionsTable();
+    showToast('⚠️ Update failed on backend. Restored previous transaction.');
+    return;
+  }
+  await refreshUiFromBackendIfAvailable();
 
   closeModal('modal-edit');
   renderDashboard();
@@ -955,9 +1004,31 @@ async function confirmDelete() {
   pendingDeleteId = null;
 
   // Delete from local state first (immediate UI update)
+  const txBeforeDelete = state.transactions.find(t => t.id === id);
   deleteTransaction(id);
-  // Sync to backend if configured
-  if (BACKEND_URL) callBackend('deleteExpense', { id }, { fallbackToLocal: false }).catch(() => { });
+  let backendDeleteFailed = false;
+
+  // Sync to backend if configured; rollback local if backend failed.
+  if (BACKEND_URL) {
+    try {
+      const res = await callBackend('deleteExpense', { id }, { fallbackToLocal: false });
+      if (!res || !res.success) backendDeleteFailed = true;
+    } catch (e) {
+      backendDeleteFailed = true;
+    }
+  }
+
+  if (backendDeleteFailed) {
+    if (txBeforeDelete) {
+      state.transactions.unshift(txBeforeDelete);
+      saveState();
+    }
+    closeModal('modal-delete');
+    renderDashboard();
+    renderTransactionsTable();
+    showToast('⚠️ Delete failed on backend. Transaction restored locally.');
+    return;
+  }
 
   closeModal('modal-delete');
   renderDashboard();
@@ -980,13 +1051,31 @@ async function saveCategory() {
 
   // Update local state first
   const exists = state.customCategories.some(c => c.name.toLowerCase() === name.toLowerCase());
+  const categoryName = capitalize(name);
   if (!exists) {
     const kwArr = kws ? kws.split(',').map(k => k.trim().toLowerCase()).filter(Boolean) : [];
-    state.customCategories.push({ name: capitalize(name), keywords: kwArr, icon: '🏷️' });
+    state.customCategories.push({ name: categoryName, keywords: kwArr, icon: '🏷️' });
     saveState();
   }
   // Sync to backend if configured
-  if (BACKEND_URL) callBackend('addCategory', { name, keywords: kws }, { fallbackToLocal: false }).catch(() => { });
+  let backendFailed = false;
+  if (BACKEND_URL) {
+    try {
+      const res = await callBackend('addCategory', { name, keywords: kws }, { fallbackToLocal: false });
+      if (!res || !res.success) backendFailed = true;
+    } catch (_) {
+      backendFailed = true;
+    }
+  }
+  if (backendFailed) {
+    state.customCategories = state.customCategories.filter(c => c.name.toLowerCase() !== categoryName.toLowerCase());
+    saveState();
+    renderCategoriesGrid();
+    populateCategoryDropdowns();
+    showToast('⚠️ Category add failed on backend. Local change reverted.');
+    return;
+  }
+  await refreshUiFromBackendIfAvailable();
 
   closeModal('modal-category');
   renderCategoriesGrid();
@@ -994,9 +1083,11 @@ async function saveCategory() {
   showToast(`✅ Category "${capitalize(name)}" added!`);
 }
 
-function deleteCategory(name) {
+async function deleteCategory(name) {
   const idx = state.customCategories.findIndex(c => c.name.toLowerCase() === name.toLowerCase());
   if (idx === -1) return;
+  const prevCategories = JSON.parse(JSON.stringify(state.customCategories));
+  const prevTransactions = JSON.parse(JSON.stringify(state.transactions));
 
   // Reassign transactions that used this category
   let moved = 0;
@@ -1011,6 +1102,27 @@ function deleteCategory(name) {
 
   state.customCategories.splice(idx, 1);
   saveState();
+  let backendFailed = false;
+  if (BACKEND_URL) {
+    try {
+      const res = await callBackend('deleteCategory', { name }, { fallbackToLocal: false });
+      if (!res || !res.success) backendFailed = true;
+    } catch (_) {
+      backendFailed = true;
+    }
+  }
+  if (backendFailed) {
+    state.customCategories = prevCategories;
+    state.transactions = prevTransactions;
+    saveState();
+    renderCategoriesGrid();
+    populateCategoryDropdowns();
+    renderDashboard();
+    renderTransactionsTable();
+    showToast('⚠️ Category delete failed on backend. Local changes reverted.');
+    return;
+  }
+  await refreshUiFromBackendIfAvailable();
   renderCategoriesGrid();
   populateCategoryDropdowns();
   renderDashboard();
@@ -1055,7 +1167,7 @@ function openEditCategoryModal(name) {
   openModal('modal-edit-category');
 }
 
-function saveEditCategory() {
+async function saveEditCategory() {
   const newName = document.getElementById('edit-cat-name').value.trim();
   const newKws = document.getElementById('edit-cat-keywords').value.trim();
   if (!newName) { showToast('Category name required'); return; }
@@ -1066,6 +1178,8 @@ function saveEditCategory() {
   if (idx === -1) return;
 
   const kwArr = newKws ? newKws.split(',').map(k => k.trim().toLowerCase()).filter(Boolean) : [];
+  const prevCategories = JSON.parse(JSON.stringify(state.customCategories));
+  const prevTransactions = JSON.parse(JSON.stringify(state.transactions));
 
   // Update category
   const oldName = state.customCategories[idx].name;
@@ -1083,6 +1197,31 @@ function saveEditCategory() {
   });
 
   saveState();
+  let backendFailed = false;
+  if (BACKEND_URL) {
+    try {
+      const res = await callBackend(
+        'updateCategory',
+        { oldName, newName: capitalize(newName), keywords: newKws },
+        { fallbackToLocal: false }
+      );
+      if (!res || !res.success) backendFailed = true;
+    } catch (_) {
+      backendFailed = true;
+    }
+  }
+  if (backendFailed) {
+    state.customCategories = prevCategories;
+    state.transactions = prevTransactions;
+    saveState();
+    renderCategoriesGrid();
+    populateCategoryDropdowns();
+    renderDashboard();
+    renderTransactionsTable();
+    showToast('⚠️ Category update failed on backend. Local changes reverted.');
+    return;
+  }
+  await refreshUiFromBackendIfAvailable();
   closeModal('modal-edit-category');
   renderCategoriesGrid();
   populateCategoryDropdowns();
@@ -1109,8 +1248,35 @@ async function handleQuickAdd(e) {
 
   // Add to local state ONCE (fixes double-add bug)
   const tx = addTransaction(payload);
-  // Sync to backend if configured (fire-and-forget)
-  if (BACKEND_URL) callBackend('addExpense', payload, { fallbackToLocal: false }).catch(() => { });
+  // Sync to backend if configured. Roll back local if backend fails.
+  let backendFailed = false;
+  let backendId = null;
+  if (BACKEND_URL) {
+    try {
+      const res = await callBackend('addExpense', payload, { fallbackToLocal: false });
+      if (!res || !res.success) {
+        backendFailed = true;
+      } else if (res.id) {
+        backendId = res.id;
+      }
+    } catch (_) {
+      backendFailed = true;
+    }
+  }
+  if (backendFailed) {
+    deleteTransaction(tx.id);
+    renderDashboard();
+    showToast('⚠️ Add failed on backend. Transaction was not saved.');
+    return;
+  }
+  if (backendId) {
+    const added = state.transactions.find(t => t.id === tx.id);
+    if (added) {
+      added.id = backendId;
+      saveState();
+    }
+  }
+  await refreshUiFromBackendIfAvailable();
 
   // Show confirmation
   const lastAdded = document.getElementById('last-added');

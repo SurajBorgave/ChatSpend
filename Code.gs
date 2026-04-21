@@ -308,6 +308,12 @@ function handleDirectAction(body) {
     case 'addCategory':
       result = directAddCategory(body);
       break;
+    case 'deleteCategory':
+      result = directDeleteCategory(body);
+      break;
+    case 'updateCategory':
+      result = directUpdateCategory(body);
+      break;
     case 'getAll':
       result = { success: true, transactions: getAllTransactions() };
       break;
@@ -973,6 +979,19 @@ function getAllTransactions() {
     .reverse(); // newest first
 }
 
+function getTransactionRowsWithMap(sheet) {
+  const data = sheet.getDataRange().getValues();
+  if (!data.length) {
+    return { data: [], map: getTransactionHeaderMap([]), start: 0 };
+  }
+  const headerLooksPresent =
+    Array.isArray(data[0]) &&
+    data[0].some(c => ['id', 'title', 'amount', 'category', 'month'].includes((c || '').toString().trim().toLowerCase()));
+  const map = getTransactionHeaderMap(headerLooksPresent ? data[0] : []);
+  const start = headerLooksPresent ? 1 : 0;
+  return { data, map, start };
+}
+
 /** Search transactions by title (partial match) */
 function searchTransactions(query) {
   const lower = query.toLowerCase();
@@ -982,11 +1001,19 @@ function searchTransactions(query) {
 /** Delete a transaction by ID */
 function deleteTransactionById(id) {
   const sheet = getSheet(SHEETS.TRANSACTIONS);
-  const data  = sheet.getDataRange().getValues();
-  for (let i = 1; i < data.length; i++) {
-    if (data[i][0] === id) {
+  const { data, map, start } = getTransactionRowsWithMap(sheet);
+  for (let i = start; i < data.length; i++) {
+    if (data[i][map.id] === id) {
       // Save to undo buffer
-      const tx = { id: data[i][0], title: data[i][1], amount: data[i][2], category: data[i][3], payment: data[i][4], date: data[i][5], month: data[i][6] };
+      const tx = {
+        id: data[i][map.id],
+        title: data[i][map.title],
+        amount: data[i][map.amount],
+        category: data[i][map.category],
+        payment: data[i][map.payment],
+        date: data[i][map.date],
+        month: data[i][map.month],
+      };
       PropertiesService.getScriptProperties().setProperty('LAST_DELETED', JSON.stringify(tx));
       sheet.deleteRow(i + 1);
       return true;
@@ -998,25 +1025,44 @@ function deleteTransactionById(id) {
 /** Delete the most recent transaction */
 function deleteLastTransaction() {
   const sheet = getSheet(SHEETS.TRANSACTIONS);
-  const last  = sheet.getLastRow();
-  if (last <= 1) return null;
-  const row = sheet.getRange(last, 1, 1, 8).getValues()[0];
-  const tx  = { id: row[0], title: row[1], amount: row[2], category: row[3], payment: row[4], date: row[5], month: row[6] };
+  const { data, map, start } = getTransactionRowsWithMap(sheet);
+  if (data.length <= start) return null;
+
+  // newest is bottom-most non-empty data row
+  let targetRowIdx = -1;
+  for (let i = data.length - 1; i >= start; i--) {
+    if (String(data[i][map.id] || '').trim() !== '') {
+      targetRowIdx = i;
+      break;
+    }
+  }
+  if (targetRowIdx < start) return null;
+
+  const row = data[targetRowIdx];
+  const tx  = {
+    id: row[map.id],
+    title: row[map.title],
+    amount: row[map.amount],
+    category: row[map.category],
+    payment: row[map.payment],
+    date: row[map.date],
+    month: row[map.month],
+  };
   PropertiesService.getScriptProperties().setProperty('LAST_DELETED', JSON.stringify(tx));
-  sheet.deleteRow(last);
+  sheet.deleteRow(targetRowIdx + 1);
   return tx;
 }
 
 /** Update a transaction by ID */
 function updateTransactionById(id, changes) {
   const sheet = getSheet(SHEETS.TRANSACTIONS);
-  const data  = sheet.getDataRange().getValues();
-  for (let i = 1; i < data.length; i++) {
-    if (data[i][0] === id) {
-      if (changes.amount   !== undefined) sheet.getRange(i + 1, 3).setValue(changes.amount);
-      if (changes.title    !== undefined) sheet.getRange(i + 1, 2).setValue(changes.title);
-      if (changes.category !== undefined) sheet.getRange(i + 1, 4).setValue(changes.category);
-      if (changes.payment  !== undefined) sheet.getRange(i + 1, 5).setValue(changes.payment);
+  const { data, map, start } = getTransactionRowsWithMap(sheet);
+  for (let i = start; i < data.length; i++) {
+    if (data[i][map.id] === id) {
+      if (changes.amount   !== undefined) sheet.getRange(i + 1, map.amount + 1).setValue(changes.amount);
+      if (changes.title    !== undefined) sheet.getRange(i + 1, map.title + 1).setValue(changes.title);
+      if (changes.category !== undefined) sheet.getRange(i + 1, map.category + 1).setValue(changes.category);
+      if (changes.payment  !== undefined) sheet.getRange(i + 1, map.payment + 1).setValue(changes.payment);
       return true;
     }
   }
@@ -1117,6 +1163,75 @@ function directSetBudget(body) {
 function directAddCategory(body) {
   addCategoryToSheet(capitalizeWords(body.name), body.keywords || '');
   return { success: true };
+}
+
+function directDeleteCategory(body) {
+  const ok = deleteCategoryFromSheet(body.name);
+  if (ok) {
+    renameCategoryInTransactions(body.name, 'Others');
+  }
+  return { success: ok };
+}
+
+function directUpdateCategory(body) {
+  const oldName = capitalizeWords(body.oldName || '');
+  const newName = capitalizeWords(body.newName || '');
+  const keywords = body.keywords || '';
+  if (!oldName || !newName) return { success: false, error: 'Invalid category names' };
+
+  const ok = updateCategoryInSheet(oldName, newName, keywords);
+  if (ok && oldName.toLowerCase() !== newName.toLowerCase()) {
+    renameCategoryInTransactions(oldName, newName);
+  }
+  return { success: ok };
+}
+
+function deleteCategoryFromSheet(name) {
+  const target = capitalizeWords((name || '').toString().trim()).toLowerCase();
+  if (!target) return false;
+  const sheet = getSheet(SHEETS.CATEGORIES);
+  const data = sheet.getDataRange().getValues();
+  if (!data.length) return false;
+  const start = getDataStartIndexByHeader(data[0][0], 'CategoryName');
+  for (let i = start; i < data.length; i++) {
+    if ((data[i][0] || '').toString().trim().toLowerCase() === target) {
+      sheet.deleteRow(i + 1);
+      return true;
+    }
+  }
+  return false;
+}
+
+function updateCategoryInSheet(oldName, newName, keywords) {
+  const oldN = oldName.toLowerCase();
+  const newN = newName;
+  const sheet = getSheet(SHEETS.CATEGORIES);
+  const data = sheet.getDataRange().getValues();
+  if (!data.length) return false;
+  const start = getDataStartIndexByHeader(data[0][0], 'CategoryName');
+  for (let i = start; i < data.length; i++) {
+    const curr = (data[i][0] || '').toString().trim().toLowerCase();
+    if (curr === oldN) {
+      sheet.getRange(i + 1, 1).setValue(newN);
+      sheet.getRange(i + 1, 2).setValue(keywords || '');
+      return true;
+    }
+  }
+  return false;
+}
+
+function renameCategoryInTransactions(oldName, newName) {
+  const oldN = (oldName || '').toString().trim().toLowerCase();
+  const newN = capitalizeWords((newName || '').toString().trim()) || 'Others';
+  if (!oldN) return;
+  const sheet = getSheet(SHEETS.TRANSACTIONS);
+  const { data, map, start } = getTransactionRowsWithMap(sheet);
+  for (let i = start; i < data.length; i++) {
+    const cat = (data[i][map.category] || '').toString().trim().toLowerCase();
+    if (cat === oldN) {
+      sheet.getRange(i + 1, map.category + 1).setValue(newN);
+    }
+  }
 }
 
 /* ============================================================
