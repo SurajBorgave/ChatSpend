@@ -479,14 +479,28 @@ async function callBackend(action, payload = {}, options = {}) {
 }
 
 function normalizeTransactionObject(tx) {
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const monthRegex = /^[A-Z][a-z]{2}-\d{4}$/;
+  const parsedDateFromDate = tx.date ? new Date(tx.date) : null;
+  const parsedDateFromTs = tx.timestamp ? new Date(tx.timestamp) : null;
+  const bestDate = parsedDateFromDate && !isNaN(parsedDateFromDate.getTime())
+    ? parsedDateFromDate
+    : (parsedDateFromTs && !isNaN(parsedDateFromTs.getTime()) ? parsedDateFromTs : null);
+  const normalizedDate = bestDate
+    ? `${pad(bestDate.getDate())}-${pad(bestDate.getMonth() + 1)}-${bestDate.getFullYear()}`
+    : (tx.date || todayDDMMYYYY());
+  const normalizedMonth = (typeof tx.month === 'string' && monthRegex.test(tx.month))
+    ? tx.month
+    : (bestDate ? `${months[bestDate.getMonth()]}-${bestDate.getFullYear()}` : currentMonthKey());
+
   return {
     id: tx.id || generateId(),
     amount: Number(tx.amount || 0),
     title: capitalize(tx.title || 'Unnamed'),
     category: normalizeCategoryName(tx.category || 'Others'),
     payment: normalizePaymentMethod(tx.payment || 'UPI'),
-    date: tx.date || todayDDMMYYYY(),
-    month: tx.month || currentMonthKey(),
+    date: normalizedDate,
+    month: normalizedMonth,
     timestamp: tx.timestamp || new Date().toISOString(),
   };
 }

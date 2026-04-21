@@ -319,6 +319,9 @@ function handleDirectAction(body) {
         categories: getCustomCategories(),
       };
       break;
+    case 'health':
+      result = getBackendHealthReport();
+      break;
     case 'search':
       result = { success: true, transactions: searchTransactions(body.query) };
       break;
@@ -332,15 +335,66 @@ function handleDirectAction(body) {
 }
 
 function rowToTransactionObject(r) {
+  const normalized = normalizeDateAndMonthFields(r[5], r[6], r[7]);
   return {
     id: r[0],
     title: r[1],
     amount: Number(parseAmountValue(r[2]) || 0),
     category: r[3] || 'Others',
     payment: r[4] || 'UPI',
-    date: r[5] || getTodayDDMMYYYY(),
-    month: r[6] || getCurrentMonthKey(),
-    timestamp: r[7] || new Date().toISOString(),
+    date: normalized.date,
+    month: normalized.month,
+    timestamp: normalized.timestamp,
+  };
+}
+
+function normalizeDateAndMonthFields(dateValue, monthValue, timestampValue) {
+  const fallbackNow = new Date();
+  const tsCandidate = (timestampValue || '').toString().trim();
+  const monthCandidate = normalizeMonthKey(monthValue);
+
+  let parsedDate = null;
+  let parsedMonth = null;
+
+  // 1) Try explicit dd-mm-yyyy date format
+  const dateText = (dateValue || '').toString().trim();
+  const m1 = dateText.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+  if (m1) {
+    const d = new Date(parseInt(m1[3], 10), parseInt(m1[2], 10) - 1, parseInt(m1[1], 10));
+    if (!isNaN(d.getTime())) {
+      parsedDate = `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
+      parsedMonth = formatMonthKey(d);
+    }
+  }
+
+  // 2) Try native Date parsing for raw date cell values
+  if (!parsedDate && dateText) {
+    const d = new Date(dateText);
+    if (!isNaN(d.getTime())) {
+      parsedDate = `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
+      parsedMonth = formatMonthKey(d);
+    }
+  }
+
+  // 3) Try timestamp as fallback
+  if (!parsedDate && tsCandidate) {
+    const d = new Date(tsCandidate);
+    if (!isNaN(d.getTime())) {
+      parsedDate = `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
+      parsedMonth = formatMonthKey(d);
+    }
+  }
+
+  // 4) Last resort: now
+  if (!parsedDate) {
+    parsedDate = `${String(fallbackNow.getDate()).padStart(2, '0')}-${String(fallbackNow.getMonth() + 1).padStart(2, '0')}-${fallbackNow.getFullYear()}`;
+    parsedMonth = formatMonthKey(fallbackNow);
+  }
+
+  return {
+    date: parsedDate,
+    month: monthCandidate || parsedMonth || getCurrentMonthKey(),
+    timestamp: tsCandidate || new Date().toISOString(),
   };
 }
 
@@ -356,6 +410,30 @@ function getBudgetMap() {
     if (month && Number.isFinite(amount)) out[month] = amount;
   }
   return out;
+}
+
+function getBackendHealthReport() {
+  const tx = getSheet(SHEETS.TRANSACTIONS).getDataRange().getValues();
+  const cat = getSheet(SHEETS.CATEGORIES).getDataRange().getValues();
+  const bud = getSheet(SHEETS.BUDGET).getDataRange().getValues();
+  const allTx = getAllTransactions();
+  const currentMonth = getCurrentMonthKey();
+  const currentMonthTx = allTx.filter(t => getMonthKeyFromTransactionRow(t) === currentMonth);
+
+  return {
+    success: true,
+    sheets: SHEETS,
+    currentMonth,
+    transactionsTotalRows: tx.length,
+    categoriesTotalRows: cat.length,
+    budgetTotalRows: bud.length,
+    parsedTransactions: allTx.length,
+    parsedCurrentMonthTransactions: currentMonthTx.length,
+    currentBudget: getBudgetForMonth(currentMonth),
+    sampleTransactionRows: allTx.slice(0, 5),
+    budgetMap: getBudgetMap(),
+    sampleCategories: getCustomCategories().slice(0, 10),
+  };
 }
 
 function getCustomCategories() {
@@ -949,14 +1027,17 @@ function updateTransactionById(id, changes) {
 function setBudgetInSheet(month, amount) {
   const sheet = getSheet(SHEETS.BUDGET);
   const data  = sheet.getDataRange().getValues();
+  const normalizedTargetMonth = normalizeMonthKey(month) || getCurrentMonthKey();
   const start = data.length ? getDataStartIndexByHeader(data[0][0], 'Month') : 0;
   for (let i = start; i < data.length; i++) {
-    if (data[i][0] === month) {
+    const rowMonth = normalizeMonthKey(data[i][0]);
+    if (rowMonth && rowMonth === normalizedTargetMonth) {
       sheet.getRange(i + 1, 2).setValue(amount);
+      sheet.getRange(i + 1, 1).setValue(normalizedTargetMonth);
       return;
     }
   }
-  sheet.appendRow([month, amount]);
+  sheet.appendRow([normalizedTargetMonth, amount]);
 }
 
 /** Get budget for a specific month */
@@ -977,10 +1058,14 @@ function getBudgetForMonth(month) {
 function addCategoryToSheet(name, keywords) {
   const sheet = getSheet(SHEETS.CATEGORIES);
   const data  = sheet.getDataRange().getValues();
-  for (let i = 1; i < data.length; i++) {
-    if (data[i][0].toString().toLowerCase() === name.toLowerCase()) return; // already exists
+  const normalizedName = capitalizeWords((name || '').toString().trim());
+  if (!normalizedName) return;
+
+  const start = data.length ? getDataStartIndexByHeader(data[0][0], 'CategoryName') : 0;
+  for (let i = start; i < data.length; i++) {
+    if (data[i][0].toString().toLowerCase() === normalizedName.toLowerCase()) return; // already exists
   }
-  sheet.appendRow([name, keywords]);
+  sheet.appendRow([normalizedName, keywords || '']);
 }
 
 /** Get all custom category names from sheet */
@@ -988,7 +1073,8 @@ function getAllCategoryNames() {
   const defaults = ['Food', 'Transport', 'Shopping', 'Entertainment', 'Bills', 'Healthcare', 'Others'];
   const sheet    = getSheet(SHEETS.CATEGORIES);
   const data     = sheet.getDataRange().getValues();
-  const custom   = data.slice(1).map(r => r[0].toString()).filter(Boolean);
+  const start = data.length ? getDataStartIndexByHeader(data[0][0], 'CategoryName') : 0;
+  const custom   = data.slice(start).map(r => r[0].toString()).filter(Boolean);
   return [...custom, ...defaults];
 }
 
