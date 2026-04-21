@@ -852,6 +852,32 @@ function normalizeTransactionRow(row, map) {
   ];
 }
 
+/** Force Amount column to display as a number (fixes Date-formatted column showing 1900). */
+function setTransactionAmountCellFormat_(sheet, row1Based, map, amountValue) {
+  const col = map.amount + 1;
+  const v = parseFloat(amountValue);
+  const cell = sheet.getRange(row1Based, col);
+  const n = Number.isFinite(v) && v >= 0 ? v : 0;
+  cell.setNumberFormat('#,##0.##').setValue(n);
+}
+
+/**
+ * Run once from Apps Script if Amount column was ever set to Date format:
+ * reapplies number format to all data rows (values unchanged).
+ */
+function fixTransactionAmountColumnDisplay() {
+  const sheet = getSheet(SHEETS.TRANSACTIONS);
+  const { data, map, start } = getTransactionRowsWithMap(sheet);
+  if (data.length <= start) {
+    Logger.log('No transaction rows to format.');
+    return;
+  }
+  const col = map.amount + 1;
+  const lastRow = data.length;
+  sheet.getRange(start + 1, col, lastRow, col).setNumberFormat('#,##0.##');
+  Logger.log('Amount column formatted from row ' + (start + 1) + ' to ' + lastRow);
+}
+
 /** Initialize sheets with headers (run this once manually) */
 function setupSheets() {
   const txSheet   = getSheet(SHEETS.TRANSACTIONS);
@@ -861,6 +887,10 @@ function setupSheets() {
   if (txSheet.getLastRow() === 0) {
     txSheet.appendRow(['ID', 'Title', 'Amount', 'Category', 'PaymentMethod', 'Date', 'Month', 'Timestamp']);
     txSheet.getRange(1, 1, 1, 8).setFontWeight('bold');
+    // Default Amount column to numeric display for new sheets (bounded range).
+    const hdr = txSheet.getRange(1, 1, 1, 8).getValues()[0];
+    const map = getTransactionHeaderMap(hdr);
+    txSheet.getRange(2, map.amount + 1, 500, map.amount + 1).setNumberFormat('#,##0.##');
   }
   if (catSheet.getLastRow() === 0) {
     catSheet.appendRow(['CategoryName', 'Keywords']);
@@ -986,6 +1016,8 @@ function addTransactionToSheet({ amount, title, category, payment, date, month }
   row[map.timestamp] = String(timestamp);
 
   sheet.appendRow(row);
+  const lastRow = sheet.getLastRow();
+  setTransactionAmountCellFormat_(sheet, lastRow, map, safeAmount);
   return id;
 }
 
@@ -1089,7 +1121,9 @@ function updateTransactionById(id, changes) {
   const { data, map, start } = getTransactionRowsWithMap(sheet);
   for (let i = start; i < data.length; i++) {
     if (data[i][map.id] === id) {
-      if (changes.amount   !== undefined) sheet.getRange(i + 1, map.amount + 1).setValue(changes.amount);
+      if (changes.amount !== undefined) {
+        setTransactionAmountCellFormat_(sheet, i + 1, map, changes.amount);
+      }
       if (changes.title    !== undefined) sheet.getRange(i + 1, map.title + 1).setValue(changes.title);
       if (changes.category !== undefined) sheet.getRange(i + 1, map.category + 1).setValue(changes.category);
       if (changes.payment  !== undefined) sheet.getRange(i + 1, map.payment + 1).setValue(changes.payment);
