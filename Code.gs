@@ -584,6 +584,50 @@ function getDataStartIndexByHeader(firstCellValue, expectedHeaderLabel) {
   return first === expectedHeaderLabel.toLowerCase() ? 1 : 0;
 }
 
+function getTransactionHeaderMap(headerRow) {
+  const map = {
+    id: 0,
+    title: 1,
+    amount: 2,
+    category: 3,
+    payment: 4,
+    date: 5,
+    month: 6,
+    timestamp: 7,
+  };
+  if (!Array.isArray(headerRow)) return map;
+
+  const normalized = headerRow.map(h => (h || '').toString().trim().toLowerCase());
+  const idx = {
+    id: normalized.indexOf('id'),
+    title: normalized.indexOf('title'),
+    amount: normalized.indexOf('amount'),
+    category: normalized.indexOf('category'),
+    payment: normalized.indexOf('paymentmethod') >= 0 ? normalized.indexOf('paymentmethod') : normalized.indexOf('payment'),
+    date: normalized.indexOf('date'),
+    month: normalized.indexOf('month'),
+    timestamp: normalized.indexOf('timestamp'),
+  };
+
+  Object.keys(map).forEach(k => {
+    if (idx[k] >= 0) map[k] = idx[k];
+  });
+  return map;
+}
+
+function normalizeTransactionRow(row, map) {
+  return [
+    row[map.id],         // 0 id
+    row[map.title],      // 1 title
+    row[map.amount],     // 2 amount
+    row[map.category],   // 3 category
+    row[map.payment],    // 4 payment
+    row[map.date],       // 5 date
+    row[map.month],      // 6 month
+    row[map.timestamp],  // 7 timestamp
+  ];
+}
+
 /** Initialize sheets with headers (run this once manually) */
 function setupSheets() {
   const txSheet   = getSheet(SHEETS.TRANSACTIONS);
@@ -605,6 +649,55 @@ function setupSheets() {
   Logger.log('Sheets initialized successfully!');
 }
 
+/**
+ * Force all sheets to the exact expected headers/order while preserving data.
+ * Run this manually once if your sheet columns drifted.
+ */
+function normalizeSheetSchemas() {
+  normalizeSingleSheet(
+    getSheet(SHEETS.TRANSACTIONS),
+    ['ID', 'Title', 'Amount', 'Category', 'PaymentMethod', 'Date', 'Month', 'Timestamp']
+  );
+  normalizeSingleSheet(
+    getSheet(SHEETS.CATEGORIES),
+    ['CategoryName', 'Keywords']
+  );
+  normalizeSingleSheet(
+    getSheet(SHEETS.BUDGET),
+    ['Month', 'BudgetAmount']
+  );
+  Logger.log('Sheet schemas normalized successfully.');
+}
+
+function normalizeSingleSheet(sheet, expectedHeaders) {
+  const data = sheet.getDataRange().getValues();
+  const currentHeaders = data.length ? data[0].map(v => (v || '').toString().trim()) : [];
+
+  // Build header index map (case-insensitive) from current sheet.
+  const idxMap = {};
+  currentHeaders.forEach((h, i) => { idxMap[h.toLowerCase()] = i; });
+
+  const outRows = [];
+  if (data.length > 1) {
+    for (let r = 1; r < data.length; r++) {
+      const row = data[r];
+      const reordered = expectedHeaders.map(h => {
+        const idx = idxMap[h.toLowerCase()];
+        return (idx !== undefined && idx < row.length) ? row[idx] : '';
+      });
+      // Keep only non-empty rows.
+      if (reordered.some(v => String(v || '').trim() !== '')) outRows.push(reordered);
+    }
+  }
+
+  // Recreate table region with expected headers + normalized rows.
+  sheet.clearContents();
+  sheet.getRange(1, 1, 1, expectedHeaders.length).setValues([expectedHeaders]).setFontWeight('bold');
+  if (outRows.length) {
+    sheet.getRange(2, 1, outRows.length, expectedHeaders.length).setValues(outRows);
+  }
+}
+
 /** Add a transaction row */
 function addTransactionToSheet({ amount, title, category, payment, date, month }) {
   const id        = 'tx_' + new Date().getTime();
@@ -618,8 +711,19 @@ function getAllTransactions() {
   const sheet = getSheet(SHEETS.TRANSACTIONS);
   const data  = sheet.getDataRange().getValues();
   if (data.length === 0) return [];
-  const start = getDataStartIndexByHeader(data[0][0], 'ID');
-  return data.slice(start).reverse(); // newest first
+
+  const headerLooksPresent =
+    Array.isArray(data[0]) &&
+    data[0].some(c => ['id', 'title', 'amount', 'category', 'month'].includes((c || '').toString().trim().toLowerCase()));
+
+  const map = getTransactionHeaderMap(headerLooksPresent ? data[0] : []);
+  const start = headerLooksPresent ? 1 : 0;
+
+  return data
+    .slice(start)
+    .filter(r => r && r.length && r[map.id]) // ignore blank rows
+    .map(r => normalizeTransactionRow(r, map))
+    .reverse(); // newest first
 }
 
 /** Search transactions by title (partial match) */
