@@ -469,7 +469,7 @@ function handleSearch(params, queryText) {
 function handleSummary() {
   const month   = getCurrentMonthKey();
   const budget  = getBudgetForMonth(month);
-  const txs     = getAllTransactions().filter(t => t[6] === month); // col 6 = Month
+  const txs     = getAllTransactions().filter(t => getMonthKeyFromTransactionRow(t) === month);
   const spent   = txs.reduce((s, t) => s + parseFloat(t[2] || 0), 0);
   const remaining = budget - spent;
   const count   = txs.length;
@@ -487,6 +487,68 @@ function handleSummary() {
   if (spent > budget && budget > 0) reply += `\n\n⚠️ You've exceeded your budget!`;
 
   return { reply };
+}
+
+function getMonthKeyFromTransactionRow(tx) {
+  if (!tx || !Array.isArray(tx)) return getCurrentMonthKey();
+
+  // Preferred explicit month column.
+  const explicitMonth = (tx[6] || '').toString().trim();
+  if (explicitMonth) {
+    const normalized = normalizeMonthKey(explicitMonth);
+    if (normalized) return normalized;
+  }
+
+  // Fallback: parse dd-mm-yyyy from Date column.
+  const dateText = (tx[5] || '').toString().trim();
+  const m = dateText.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+  if (m) {
+    const day = parseInt(m[1], 10);
+    const mon = parseInt(m[2], 10);
+    const year = parseInt(m[3], 10);
+    const d = new Date(year, mon - 1, day);
+    if (!isNaN(d.getTime())) return formatMonthKey(d);
+  }
+
+  // Fallback: parse ISO timestamp.
+  const ts = (tx[7] || '').toString().trim();
+  if (ts) {
+    const d = new Date(ts);
+    if (!isNaN(d.getTime())) return formatMonthKey(d);
+  }
+
+  return getCurrentMonthKey();
+}
+
+function formatMonthKey(d) {
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${months[d.getMonth()]}-${d.getFullYear()}`;
+}
+
+function normalizeMonthKey(value) {
+  const raw = (value || '').toString().trim();
+  if (!raw) return '';
+
+  // Already in expected form.
+  const m1 = raw.match(/^([A-Za-z]{3})-(\d{4})$/);
+  if (m1) {
+    return `${capitalizeWords(m1[1].slice(0, 3).toLowerCase())}-${m1[2]}`;
+  }
+
+  // Try date-like formats: dd-mm-yyyy / dd/mm/yyyy / yyyy-mm-dd
+  const d = new Date(raw);
+  if (!isNaN(d.getTime())) return formatMonthKey(d);
+
+  const m2 = raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  if (m2) {
+    const day = parseInt(m2[1], 10);
+    const mon = parseInt(m2[2], 10);
+    const year = parseInt(m2[3], 10);
+    const parsed = new Date(year, mon - 1, day);
+    if (!isNaN(parsed.getTime())) return formatMonthKey(parsed);
+  }
+
+  return '';
 }
 
 /** Handle ShowAll */
@@ -831,8 +893,10 @@ function getBudgetForMonth(month) {
   const data  = sheet.getDataRange().getValues();
   if (data.length === 0) return 0;
   const start = getDataStartIndexByHeader(data[0][0], 'Month');
+  const target = normalizeMonthKey(month);
   for (let i = start; i < data.length; i++) {
-    if (data[i][0] === month) return parseFloat(data[i][1]) || 0;
+    const rowMonth = normalizeMonthKey(data[i][0]);
+    if (rowMonth && rowMonth === target) return parseFloat(data[i][1]) || 0;
   }
   return 0;
 }
