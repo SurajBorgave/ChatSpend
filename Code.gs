@@ -311,6 +311,14 @@ function handleDirectAction(body) {
     case 'getAll':
       result = { success: true, transactions: getAllTransactions() };
       break;
+    case 'getState':
+      result = {
+        success: true,
+        transactions: getAllTransactions().map(rowToTransactionObject),
+        budget: getBudgetMap(),
+        categories: getCustomCategories(),
+      };
+      break;
     case 'search':
       result = { success: true, transactions: searchTransactions(body.query) };
       break;
@@ -321,6 +329,53 @@ function handleDirectAction(body) {
   return ContentService
     .createTextOutput(JSON.stringify(result))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+function rowToTransactionObject(r) {
+  return {
+    id: r[0],
+    title: r[1],
+    amount: Number(parseAmountValue(r[2]) || 0),
+    category: r[3] || 'Others',
+    payment: r[4] || 'UPI',
+    date: r[5] || getTodayDDMMYYYY(),
+    month: r[6] || getCurrentMonthKey(),
+    timestamp: r[7] || new Date().toISOString(),
+  };
+}
+
+function getBudgetMap() {
+  const out = {};
+  const sheet = getSheet(SHEETS.BUDGET);
+  const data = sheet.getDataRange().getValues();
+  if (!data.length) return out;
+  const start = getDataStartIndexByHeader(data[0][0], 'Month');
+  for (let i = start; i < data.length; i++) {
+    const month = normalizeMonthKey(data[i][0]);
+    const amount = parseAmountValue(data[i][1]);
+    if (month && Number.isFinite(amount)) out[month] = amount;
+  }
+  return out;
+}
+
+function getCustomCategories() {
+  const sheet = getSheet(SHEETS.CATEGORIES);
+  const data = sheet.getDataRange().getValues();
+  if (!data.length) return [];
+
+  const start = getDataStartIndexByHeader(data[0][0], 'CategoryName');
+  const rows = data.slice(start);
+
+  return rows
+    .filter(r => String(r[0] || '').trim() !== '')
+    .map(r => ({
+      name: capitalizeWords(String(r[0] || '').trim()),
+      keywords: String(r[1] || '')
+        .split(',')
+        .map(k => k.trim().toLowerCase())
+        .filter(Boolean),
+      icon: '🏷️',
+    }));
 }
 
 /* ============================================================

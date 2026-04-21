@@ -478,6 +478,44 @@ async function callBackend(action, payload = {}, options = {}) {
   }
 }
 
+function normalizeTransactionObject(tx) {
+  return {
+    id: tx.id || generateId(),
+    amount: Number(tx.amount || 0),
+    title: capitalize(tx.title || 'Unnamed'),
+    category: normalizeCategoryName(tx.category || 'Others'),
+    payment: normalizePaymentMethod(tx.payment || 'UPI'),
+    date: tx.date || todayDDMMYYYY(),
+    month: tx.month || currentMonthKey(),
+    timestamp: tx.timestamp || new Date().toISOString(),
+  };
+}
+
+async function syncStateFromBackend() {
+  if (!BACKEND_URL) return;
+  const res = await callBackend('getState', {}, { fallbackToLocal: false });
+  if (!res || !res.success) return;
+
+  if (Array.isArray(res.transactions)) {
+    state.transactions = res.transactions.map(normalizeTransactionObject);
+    state.transactions.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  }
+
+  if (res.budget && typeof res.budget === 'object') {
+    state.budget = res.budget;
+  }
+
+  if (Array.isArray(res.categories)) {
+    state.customCategories = res.categories.map(c => ({
+      name: capitalize(c.name || ''),
+      keywords: Array.isArray(c.keywords) ? c.keywords : [],
+      icon: c.icon || '🏷️',
+    }));
+  }
+
+  saveState();
+}
+
 /** Handle all actions locally (localStorage-only mode) */
 function handleLocalAction(action, payload) {
   switch (action) {
@@ -1413,12 +1451,19 @@ function applyTheme() {
    INITIALIZATION
    ============================================================ */
 
-function init() {
+async function init() {
   // Load data from localStorage
   loadState();
 
   // Apply saved theme
   applyTheme();
+
+  // Sync from backend if available so dashboard and chatbot summary match.
+  try {
+    await syncStateFromBackend();
+  } catch (e) {
+    console.warn('Initial backend sync skipped:', e?.message || e);
+  }
 
   // Render initial view
   renderDashboard();
