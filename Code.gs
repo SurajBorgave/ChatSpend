@@ -666,9 +666,12 @@ function handleSearch(params, queryText) {
     return { reply: `🔍 No transactions found for "${query}".` };
   }
 
-  const lines = txs.slice(0, 5).map(t => `• ${t[1]} - ₹${t[2]} (${t[3]}, ${t[5]})`);
+  const lines = txs.slice(0, 5).map((t, i) => {
+    const normalized = normalizeDateAndMonthFields(t[5], t[6], t[7]);
+    return `${i + 1}) ${t[1]} - ₹${t[2]} | ${t[3]} | ${normalized.date}`;
+  });
   const reply = withPrompt(
-    `I found ${txs.length} result(s) for "${query}":\n${lines.join('\n')}`,
+    `I found ${txs.length} result(s) for "${query}":\n\n${lines.join('\n')}`,
     ['You can say "update <title> to <amount>" or "delete <title>".']
   );
   return { reply };
@@ -800,11 +803,28 @@ function handleShowAll() {
 function extractItemFromExpenseText(text, amount) {
   const raw = (text || '').trim();
   if (!raw) return null;
+  const sanitizeItem = (value) => {
+    if (!value) return '';
+    let out = value
+      .replace(/[\u20B9]/g, ' ')
+      .replace(/\b(?:rs|inr|rupees?)\b/gi, ' ')
+      .replace(/\b\d+(?:\.\d+)?\b/g, ' ')
+      .replace(/\b(?:and|then)\s+on\b/gi, ' ')
+      .replace(/\b(?:and|then)\s+.+$/gi, ' ')
+      .replace(/\b(?:for|of|on|towards)\b$/gi, ' ')
+      .replace(/^[^a-zA-Z]+|[^a-zA-Z0-9)\]]+$/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const stopPhrases = ['expense', 'expenses', 'transaction', 'transactions'];
+    if (stopPhrases.includes(out.toLowerCase())) return '';
+    return out.slice(0, 60).trim();
+  };
 
   // Pattern 1: explicit prepositions (on/for/of)
   const direct = raw.match(/(?:on|for|of)\s+([a-zA-Z][a-zA-Z0-9\s&'._-]*?)(?:\s+(?:via|using|by|through|with|on)\b|$)/i);
   if (direct && direct[1]) {
-    const val = direct[1].trim();
+    const val = sanitizeItem(direct[1].trim());
     if (val) return val;
   }
 
@@ -817,7 +837,8 @@ function extractItemFromExpenseText(text, amount) {
     .trim();
 
   if (!cleaned) return null;
-  return cleaned.slice(0, 60).trim();
+  const val = sanitizeItem(cleaned);
+  return val || null;
 }
 
 /** Handle Undo (restore last deleted) */
@@ -1068,6 +1089,7 @@ function addTransactionToSheet({ amount, title, category, payment, date, month }
   const timestamp = new Date().toISOString();
   const amt = parseFloat(amount);
   const safeAmount = Number.isFinite(amt) && amt > 0 ? amt : 0;
+  const normalizedWhen = normalizeDateAndMonthFields(date, month, timestamp);
 
   const headerWidth = (data[0] && data[0].length) ? data[0].length : 0;
   const numCols = Math.max(8, headerWidth);
@@ -1079,8 +1101,8 @@ function addTransactionToSheet({ amount, title, category, payment, date, month }
   row[map.amount] = safeAmount;
   row[map.category] = String(category || 'Others').trim() || 'Others';
   row[map.payment] = String(payment || 'UPI').trim() || 'UPI';
-  row[map.date] = String(date || getTodayDDMMYYYY());
-  row[map.month] = String(month || getCurrentMonthKey());
+  row[map.date] = normalizedWhen.date;
+  row[map.month] = normalizedWhen.month;
   row[map.timestamp] = String(timestamp);
 
   sheet.appendRow(row);
