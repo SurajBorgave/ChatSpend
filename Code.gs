@@ -286,6 +286,12 @@ function jsonReply(text) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+function chooseLine(options) {
+  if (!Array.isArray(options) || options.length === 0) return '';
+  const i = Math.floor(Math.random() * options.length);
+  return options[i];
+}
+
 /* ============================================================
    DIRECT ACTION HANDLER (called from frontend script.js)
    ============================================================ */
@@ -495,7 +501,11 @@ function handleAddExpense(params, queryText) {
   // Store in sheet
   const id = addTransactionToSheet({ amount, title, category, payment, date, month });
 
-  const reply = `✅ Added ₹${amount} for ${title} (${category} via ${payment}) on ${date}`;
+  const reply = chooseLine([
+    `Done - added ₹${amount} for ${title} (${category} via ${payment}) on ${date}.`,
+    `Logged ₹${amount} for ${title} (${payment}) on ${date}.`,
+    `Saved: ${title} ₹${amount} (${category}, ${payment}) on ${date}.`,
+  ]) + '\n\nYou can also say: "show summary", "update last to 250", or "delete last".';
   const customPayload = {
     action: 'expenseAdded',
     data: { id, amount, title, category, payment, date, month },
@@ -514,7 +524,11 @@ function handleSetBudget(params) {
   const month = getCurrentMonthKey();
   setBudgetInSheet(month, amount);
 
-  const reply = `🎯 Budget set to ₹${amount} for ${month}`;
+  const reply = chooseLine([
+    `Budget updated: ₹${amount} for ${month}.`,
+    `Done - monthly budget is now ₹${amount} for ${month}.`,
+    `Set! Your ${month} budget is ₹${amount}.`,
+  ]) + '\n\nTry: "show summary" to check remaining budget.';
   return { reply, customPayload: { action: 'budgetSet', data: { amount, month } } };
 }
 
@@ -526,7 +540,7 @@ function handleAddCategory(params) {
   }
 
   addCategoryToSheet(name, '');
-  const reply = `🏷️ Category "${name}" added! You can now use it when logging expenses.`;
+  const reply = `Category "${name}" added.\n\nTry: "spent 200 on ${name.toLowerCase()}" to use it right away.`;
   return { reply, customPayload: { action: 'categoryAdded', data: { name } } };
 }
 
@@ -538,7 +552,7 @@ function handleDeleteExpense(params, queryText) {
   if (lower.includes('last') || lower.includes('recent')) {
     const tx = deleteLastTransaction();
     if (!tx) return { reply: '⚠️ No transactions to delete.' };
-    const reply = `🗑️ Deleted last transaction: ${tx.title} (₹${tx.amount})`;
+    const reply = `Removed last transaction: ${tx.title} (₹${tx.amount}).\n\nIf that was a mistake, say "undo last".`;
     return { reply, customPayload: { action: 'expenseDeleted', data: { id: null } } };
   }
 
@@ -554,11 +568,11 @@ function handleDeleteExpense(params, queryText) {
   if (query) {
     const txs = searchTransactions(query);
     if (txs.length === 0) {
-      return { reply: `⚠️ No transaction found matching "${query}".` };
+      return { reply: `I couldn't find a transaction matching "${query}".\n\nTry: "show all", then "delete last" or be more specific like "delete uber".` };
     }
     const tx = txs[0]; // delete the most recent match
     deleteTransactionById(tx[0]); // col 0 = ID
-    const reply = `🗑️ Deleted "${tx[1]}" (₹${tx[2]}). Type "undo last" to restore.`;
+    const reply = `Deleted "${tx[1]}" (₹${tx[2]}).\n\nYou can say "undo last" to restore it.`;
     return { reply, customPayload: { action: 'expenseDeleted', data: { id: tx[0] } } };
   }
 
@@ -572,7 +586,7 @@ function handleUpdateExpense(params, queryText) {
   const lower   = (queryText || '').toLowerCase();
 
   if (!amount) {
-    return { reply: "⚠️ Try: 'update pizza to 300'" };
+    return { reply: 'Please include the new amount.\n\nExample: "update pizza to 300".' };
   }
 
   // Natural shortcut: "update last to 250"
@@ -582,7 +596,7 @@ function handleUpdateExpense(params, queryText) {
     if (!last) return { reply: '⚠️ No valid transactions found to update.' };
     updateTransactionById(last[0], { amount });
     const safeTitle = last[1] || 'Untitled';
-    const reply = `✏️ Updated last transaction "${safeTitle}" to ₹${amount}`;
+    const reply = `Updated last transaction "${safeTitle}" to ₹${amount}.\n\nNeed another change? Try "update ${safeTitle.toLowerCase()} to 200".`;
     return { reply, customPayload: { action: 'expenseUpdated', data: { id: last[0], amount } } };
   }
 
@@ -595,19 +609,23 @@ function handleUpdateExpense(params, queryText) {
   }
 
   if (!query) {
-    return { reply: "⚠️ Try: 'update pizza to 300' or 'update last to 300'" };
+    return { reply: 'Which expense should I update?\n\nTry: "update pizza to 300" or "update last to 300".' };
   }
 
   const txs = searchTransactions(query);
   if (txs.length === 0) {
-    return { reply: `⚠️ No transaction found matching "${query}".` };
+    return { reply: `I couldn't find "${query}".\n\nTry: "show all" or use a closer title like "update coffee to 90".` };
   }
 
   const tx  = txs[0];
   const txId = tx[0];
   updateTransactionById(txId, { amount });
 
-  const reply = `✏️ Updated "${tx[1]}" to ₹${amount}`;
+  const reply = chooseLine([
+    `Updated "${tx[1]}" to ₹${amount}.`,
+    `Done - "${tx[1]}" is now ₹${amount}.`,
+    `Changed "${tx[1]}" amount to ₹${amount}.`,
+  ]) + '\n\nYou can say "show summary" to see the latest totals.';
   return { reply, customPayload: { action: 'expenseUpdated', data: { id: txId, amount } } };
 }
 
