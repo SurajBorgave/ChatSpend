@@ -543,7 +543,7 @@ function handleDeleteExpense(params, queryText) {
   }
 
   // "delete pizza" – search by title
-  const query = (params['any'] || params['title'] || '').toString().trim();
+  const query = (params['any'] || params['title'] || params['item'] || '').toString().trim();
   if (query) {
     const txs = searchTransactions(query);
     if (txs.length === 0) {
@@ -560,7 +560,7 @@ function handleDeleteExpense(params, queryText) {
 
 /** Handle UpdateExpense intent */
 function handleUpdateExpense(params, queryText) {
-  const query   = (params['any'] || '').toString().trim();
+  let query   = (params['any'] || params['title'] || params['item'] || '').toString().trim();
   const amount  = parseFloat(params['number'] || 0);
   const lower   = (queryText || '').toLowerCase();
 
@@ -577,6 +577,12 @@ function handleUpdateExpense(params, queryText) {
     const safeTitle = last[1] || 'Untitled';
     const reply = `✏️ Updated last transaction "${safeTitle}" to ₹${amount}`;
     return { reply, customPayload: { action: 'expenseUpdated', data: { id: last[0], amount } } };
+  }
+
+  if (!query) {
+    // Fallback parse from free text: "update pizza to 300"
+    const m = (queryText || '').match(/\bupdate\s+(.+?)\s+(?:to|as)\s+\d+(?:\.\d+)?\b/i);
+    if (m && m[1]) query = m[1].trim();
   }
 
   if (!query) {

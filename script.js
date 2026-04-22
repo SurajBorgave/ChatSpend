@@ -1640,6 +1640,19 @@ document.addEventListener('df-response-received', async (event) => {
         renderTransactionsTable();
         showToast('🗑️ Transaction deleted via chat!');
       }
+
+      if (action === 'expenseUpdated' && data) {
+        if (data.id) {
+          updateTransaction(data.id, { amount: Number(data.amount) });
+        } else {
+          // Fallback for payloads that omit id: update the latest transaction.
+          const latest = state.transactions[0];
+          if (latest) updateTransaction(latest.id, { amount: Number(data.amount) });
+        }
+        renderDashboard();
+        renderTransactionsTable();
+        showToast('✏️ Transaction updated via chat!');
+      }
     }
 
     // Fallback path: some Dialogflow responses contain only plain text (no custom payload).
