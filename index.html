@@ -438,6 +438,29 @@
     storage-option="none"
   ></df-messenger>
 
+  <script>
+    // Trigger welcome once when user opens the widget (no typed message required).
+    (function initWelcomeOnFirstOpen() {
+      let welcomeTriggered = false;
+
+      const triggerWelcome = () => {
+        if (welcomeTriggered) return;
+        const df = document.querySelector('df-messenger');
+        if (!df) return;
+        welcomeTriggered = true;
+
+        // Prefer sending a query so backend/webhook returns the rich welcome text.
+        if (typeof df.sendQuery === 'function') {
+          df.sendQuery('hi');
+        }
+      };
+
+      document.addEventListener('df-messenger-chat-open-changed', (event) => {
+        if (event?.detail?.isOpen) triggerWelcome();
+      });
+    })();
+  </script>
+
   <!-- Theme the Dialogflow bubble to match our purple design -->
   <style>
     df-messenger {
