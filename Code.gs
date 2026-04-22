@@ -84,6 +84,15 @@ function doPost(e) {
 
     Logger.log('intent="' + intent + '" queryText="' + queryText + '"');
 
+    // Global stale-pending clear: if user had a half-prompt but now sends an
+    // unrelated new message, reset pending memory.
+    const pendingBefore = getPendingExpensePart();
+    if (pendingBefore) {
+      const sa = maybeStandaloneAmount(queryText);
+      const si = maybeStandaloneItem(queryText);
+      if (sa === null && !si) clearPendingExpensePart();
+    }
+
     // ── A: Dialogflow with a known intent ───────────────────────────
     if (intent) {
       let reply = '';
@@ -152,6 +161,15 @@ function handleWebsiteMessage(text) {
   try {
     const raw   = text.trim();
     const lower = raw.toLowerCase();
+    const pendingBefore = getPendingExpensePart();
+    const standaloneAmountNow = maybeStandaloneAmount(raw);
+    const standaloneItemNow = maybeStandaloneItem(raw);
+
+    // If user had a pending half-prompt but sends a new unrelated message,
+    // clear stale pending memory and continue with the new request.
+    if (pendingBefore && standaloneAmountNow === null && !standaloneItemNow) {
+      clearPendingExpensePart();
+    }
 
     // ── Help / Commands ─────────────────────────────────────────────
     if (/^help$|^commands$|what can you do|how to use|usage/.test(lower)) {
@@ -260,6 +278,7 @@ function handleWebsiteMessage(text) {
         const month    = when.month;
 
         addTransactionToSheet({ amount, title, category, payment, date, month });
+        clearPendingExpensePart();
 
         return jsonReply(
           '✅ Added ₹' + amount + ' for ' + title +
@@ -394,7 +413,7 @@ function handleLooseExpenseInput(rawText) {
   const standaloneItem = maybeStandaloneItem(raw);
   const pending = getPendingExpensePart();
 
-  if (!standaloneAmount && !standaloneItem) return { handled: false };
+  if (standaloneAmount === null && !standaloneItem) return { handled: false };
 
   if (standaloneAmount !== null) {
     if (pending && pending.item) {
@@ -634,11 +653,26 @@ function handleAddExpense(params, queryText) {
   const month   = when.month;
 
   if (!amount || amount <= 0) {
+    // Support conversational half-prompt flow when user sends item-only text.
+    const loose = handleLooseExpenseInput(queryText || rawItem || '');
+    if (loose.handled) {
+      return { reply: loose.reply, customPayload: loose.customPayload || null };
+    }
     return { reply: "⚠️ I couldn't detect an amount. Try: 'spent 200 on pizza'" };
+  }
+
+  if (!inferredItem) {
+    // Support conversational half-prompt flow when user sends amount-only text.
+    const loose = handleLooseExpenseInput(queryText || '');
+    if (loose.handled) {
+      return { reply: loose.reply, customPayload: loose.customPayload || null };
+    }
+    return { reply: `I got ₹${amount}, but I need the item name.\n\nSend just the item (example: "pizza"), or say "spent ${amount} on pizza".` };
   }
 
   // Store in sheet
   const id = addTransactionToSheet({ amount, title, category, payment, date, month });
+  clearPendingExpensePart();
 
   const replyBase = chooseLine([
     `Done - added ₹${amount} for ${title} (${category} via ${payment}) on ${date}.`,
