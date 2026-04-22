@@ -324,23 +324,23 @@ function withPrompt(reply, prompts) {
 
 function handleWelcome() {
   const intro = chooseLine([
-    'Hey there. Welcome to ChatSpend AI.',
-    'Hi. Great to see you in ChatSpend.',
-    'Welcome back. Ready to track spending quickly?',
+    '👋 Hey there! Welcome to ChatSpend AI.',
+    '✨ Hi! Great to see you in ChatSpend.',
+    '🚀 Welcome back! Ready to track spending quickly?',
   ]);
   const reply = [
     intro,
-    'I can help you log, edit, delete, and summarize expenses.',
+    'I can help you log, edit, delete, and summarize expenses 💸',
     '',
-    'You can try these phrases:',
-    '1) set budget 5000',
-    '2) spent 20 on fanta',
-    '3) spent 120 yesterday on tea',
-    '4) update last to 250',
-    '5) delete last',
-    '6) show summary',
+    'You can try these phrases 👇',
+    '1) 🎯 set budget 5000',
+    '2) 🥤 spent 20 on fanta',
+    '3) ☕ spent 120 yesterday on tea',
+    '4) ✏️ update last to 250',
+    '5) 🗑️ delete last',
+    '6) 📊 show summary',
     '',
-    'Tip: you can also send just "20" or just "pizza" and I will guide you.',
+    '💡 Tip: you can also send just "20" or just "pizza" and I will guide you.',
   ].join('\n');
   return { reply };
 }
