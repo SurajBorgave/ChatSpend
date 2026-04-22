@@ -443,26 +443,58 @@ const BROAD_CATEGORY_INFERENCE_RULES = [
       'cable', 'adapter', 'usb', 'ssd', 'hard disk', 'pendrive', 'router',
       'tablet', 'ipad', 'smartwatch', 'watch strap', 'printer',
     ],
+    seedKeywords: [
+      'mobile', 'phone', 'smartphone', 'laptop', 'headphones', 'charger', 'tablet', 'earbuds',
+      'electronics', 'gadget', 'device',
+    ],
+  },
+  {
+    name: 'Sports',
+    keywords: [
+      'ball', 'football', 'soccer', 'cricket', 'bat', 'badminton', 'shuttle', 'racket',
+      'tennis', 'table tennis', 'tt bat', 'volleyball', 'basketball', 'sports', 'sport',
+      'jersey', 'studs', 'gloves', 'helmet', 'shin guard', 'goal post', 'net',
+      'gym equipment', 'dumbbell', 'yoga mat', 'skipping rope',
+    ],
+    seedKeywords: [
+      'sports', 'cricket', 'football', 'badminton', 'tennis', 'basketball',
+      'ball', 'bat', 'racket', 'jersey', 'equipment', 'fitness',
+    ],
   },
 ];
 
-function ensureCustomCategory(name, keywordSeed = '') {
+function ensureCustomCategory(name, keywordSeed = '', defaultKeywords = []) {
   const normalized = capitalize((name || '').toString().trim());
   if (!normalized) return '';
 
   const existsInDefaults = DEFAULT_CATEGORIES.some(c => c.name.toLowerCase() === normalized.toLowerCase());
   const existing = state.customCategories.find(c => c.name.toLowerCase() === normalized.toLowerCase());
-  if (existsInDefaults || existing) return normalized;
+  const seedSet = new Set(
+    (defaultKeywords || [])
+      .map(k => (k || '').toString().trim().toLowerCase())
+      .filter(Boolean)
+  );
+  if (keywordSeed) seedSet.add(keywordSeed.toLowerCase().trim());
 
-  const keywords = keywordSeed ? [keywordSeed.toLowerCase().trim()] : [];
+  if (existsInDefaults) return normalized;
+
+  if (existing) {
+    const merged = new Set((existing.keywords || []).map(k => (k || '').toString().trim().toLowerCase()).filter(Boolean));
+    seedSet.forEach(k => merged.add(k));
+    existing.keywords = Array.from(merged);
+    saveState();
+    syncCategoryToBackend(normalized, existing.keywords.join(','));
+    return normalized;
+  }
+
   state.customCategories.push({
     name: normalized,
-    keywords,
+    keywords: Array.from(seedSet),
     icon: '🏷️',
     autoCreated: true,
   });
   saveState();
-  syncCategoryToBackend(normalized, keywords.join(','));
+  syncCategoryToBackend(normalized, Array.from(seedSet).join(','));
   return normalized;
 }
 
@@ -470,9 +502,20 @@ function inferBroadCategory(text) {
   const lower = (text || '').toLowerCase().trim();
   if (!lower) return '';
   for (const rule of BROAD_CATEGORY_INFERENCE_RULES) {
-    if (rule.keywords.some(kw => lower.includes(kw))) return rule.name;
+    if (rule.keywords.some(kw => lower.includes(kw))) {
+      return rule.name;
+    }
   }
   return '';
+}
+
+function getBroadCategoryRule(text) {
+  const lower = (text || '').toLowerCase().trim();
+  if (!lower) return null;
+  for (const rule of BROAD_CATEGORY_INFERENCE_RULES) {
+    if (rule.keywords.some(kw => lower.includes(kw))) return rule;
+  }
+  return null;
 }
 
 // Low-signal words that appear across categories and cause false positives.
@@ -539,8 +582,10 @@ function detectCategory(text) {
   if (bestScore > 0) return bestDefault;
 
   // 3. No match found — allow only broad inferred categories (e.g. mobile -> Electronics)
-  const inferredBroad = inferBroadCategory(lower);
-  if (inferredBroad) return ensureCustomCategory(inferredBroad, lower);
+  const inferredRule = getBroadCategoryRule(lower);
+  if (inferredRule) {
+    return ensureCustomCategory(inferredRule.name, lower, inferredRule.seedKeywords || inferredRule.keywords || []);
+  }
 
   // 4. Unknown item: do not create a random category from item text.
   return 'Others';
