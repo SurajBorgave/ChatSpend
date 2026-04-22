@@ -545,10 +545,23 @@ const CATEGORY_STRONG_HINTS = {
 function detectCategory(text) {
   if (!text) return 'Others';
   const lower = text.toLowerCase().trim();
+  const inferredRule = getBroadCategoryRule(lower);
+  const firstToken = (lower.split(/\s+/)[0] || '').trim();
 
   // 1. Check custom categories (name match OR keyword match)
   for (const cat of state.customCategories) {
-    if (lower.includes(cat.name.toLowerCase())) return cat.name;
+    const catNameLower = cat.name.toLowerCase();
+    // Ignore legacy auto-created item categories (e.g. "Ball") when a
+    // stronger broad inference exists (e.g. Sports).
+    if (
+      inferredRule &&
+      cat.autoCreated &&
+      catNameLower === firstToken &&
+      inferredRule.name.toLowerCase() !== catNameLower
+    ) {
+      continue;
+    }
+    if (lower.includes(catNameLower)) return cat.name;
     if (!cat.keywords) continue;
     const kws = cat.keywords.map(k => k.toLowerCase()).filter(Boolean);
     if (kws.some(kw => lower.includes(kw))) return cat.name;
@@ -582,7 +595,6 @@ function detectCategory(text) {
   if (bestScore > 0) return bestDefault;
 
   // 3. No match found — allow only broad inferred categories (e.g. mobile -> Electronics)
-  const inferredRule = getBroadCategoryRule(lower);
   if (inferredRule) {
     return ensureCustomCategory(inferredRule.name, lower, inferredRule.seedKeywords || inferredRule.keywords || []);
   }
