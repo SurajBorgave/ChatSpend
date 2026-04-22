@@ -100,7 +100,13 @@ function doPost(e) {
       else if (intent.includes('Undo')          || intent.includes('Expense.undo') || intent.toLowerCase() === 'undolast')     { ({ reply, customPayload } = handleUndo()); }
       else if (intent.includes('ShowFilter')    || intent.includes('Expense.filter') || intent.toLowerCase() === 'showfilter')   { ({ reply, customPayload } = handleFilter(params, queryText)); }
       else {
-        reply = "I didn't understand that. Try: 'spent 50 on coffee', 'set budget 5000', or 'show summary'.";
+        const loose = handleLooseExpenseInput(queryText);
+        if (loose.handled) {
+          reply = loose.reply;
+          customPayload = loose.customPayload || null;
+        } else {
+          reply = "I didn't understand that. Try: 'spent 50 on coffee', 'set budget 5000', or 'show summary'.";
+        }
       }
 
       const responseObj = { fulfillmentText: reply };
@@ -231,6 +237,12 @@ function handleWebsiteMessage(text) {
       return jsonReply(r.reply);
     }
 
+    // ── Loose Input Assist (single amount / single item) ───────────
+    {
+      const loose = handleLooseExpenseInput(raw);
+      if (loose.handled) return jsonReply(loose.reply);
+    }
+
     // ── Add Expense (default: number detected in text) ─────────────
     const amountMatch = lower.match(/\b(\d+(?:\.\d+)?)\b/);
     if (amountMatch) {
@@ -296,6 +308,127 @@ function withPrompt(reply, prompts) {
   const tail = chooseLine(prompts || []);
   if (!tail) return reply;
   return `${reply}\n\n${tail}`;
+}
+
+const PENDING_EXPENSE_KEY = 'PENDING_EXPENSE_PART';
+
+function getPendingExpensePart() {
+  try {
+    const raw = PropertiesService.getScriptProperties().getProperty(PENDING_EXPENSE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    const now = Date.now();
+    if (parsed.expiresAt && now > parsed.expiresAt) {
+      clearPendingExpensePart();
+      return null;
+    }
+    return parsed;
+  } catch (_) {
+    return null;
+  }
+}
+
+function setPendingExpensePart(partial) {
+  const expiresAt = Date.now() + (20 * 60 * 1000); // 20 min
+  PropertiesService.getScriptProperties().setProperty(
+    PENDING_EXPENSE_KEY,
+    JSON.stringify({ ...partial, expiresAt })
+  );
+}
+
+function clearPendingExpensePart() {
+  PropertiesService.getScriptProperties().deleteProperty(PENDING_EXPENSE_KEY);
+}
+
+function maybeStandaloneAmount(raw) {
+  const t = (raw || '').trim();
+  const m = t.match(/^(?:₹|rs\.?\s*|inr\s*)?(\d+(?:\.\d+)?)$/i);
+  if (!m) return null;
+  const amount = parseFloat(m[1]);
+  return Number.isFinite(amount) && amount > 0 ? amount : null;
+}
+
+function maybeStandaloneItem(raw) {
+  const t = (raw || '').trim();
+  if (!t) return null;
+  if (/\d/.test(t)) return null; // mixed with numbers => not standalone item
+  if (t.length < 2 || t.length > 50) return null;
+  const lower = t.toLowerCase();
+  const blocked = new Set([
+    'help', 'summary', 'show summary', 'show all', 'undo', 'delete', 'remove',
+    'update', 'edit', 'set budget', 'budget', 'yes', 'no', 'okay', 'ok',
+  ]);
+  if (blocked.has(lower)) return null;
+  if (!/^[a-zA-Z][a-zA-Z\s&'._-]*$/.test(t)) return null;
+  return capitalizeWords(t);
+}
+
+function addExpenseAndBuildReply(amount, item, sourceRawText) {
+  const when = parseDateContextFromText(sourceRawText || '');
+  const payment = detectPaymentFromText(sourceRawText || '');
+  const category = detectCategory(item);
+  const title = capitalizeWords(item || 'Unnamed');
+  const id = addTransactionToSheet({
+    amount,
+    title,
+    category,
+    payment,
+    date: when.date,
+    month: when.month,
+  });
+  return {
+    reply: withPrompt(
+      `Done - added ₹${amount} for ${title} (${category} via ${payment}) on ${when.date}.`,
+      ['Need anything else? Try "show summary" or "update last to 250".']
+    ),
+    customPayload: { action: 'expenseAdded', data: { id, amount, title, category, payment, date: when.date, month: when.month } },
+  };
+}
+
+function handleLooseExpenseInput(rawText) {
+  const raw = (rawText || '').trim();
+  if (!raw) return { handled: false };
+
+  const standaloneAmount = maybeStandaloneAmount(raw);
+  const standaloneItem = maybeStandaloneItem(raw);
+  const pending = getPendingExpensePart();
+
+  if (!standaloneAmount && !standaloneItem) return { handled: false };
+
+  if (standaloneAmount !== null) {
+    if (pending && pending.item) {
+      const done = addExpenseAndBuildReply(standaloneAmount, pending.item, raw);
+      clearPendingExpensePart();
+      return { handled: true, ...done };
+    }
+    setPendingExpensePart({ amount: standaloneAmount });
+    return {
+      handled: true,
+      reply: withPrompt(
+        `Got ₹${standaloneAmount}. Want to log an expense with this amount?`,
+        ['Send only the item name next (example: "pizza"), or send full text like "spent 20 on tea".']
+      ),
+    };
+  }
+
+  if (standaloneItem) {
+    if (pending && Number.isFinite(parseFloat(pending.amount))) {
+      const done = addExpenseAndBuildReply(parseFloat(pending.amount), standaloneItem, raw);
+      clearPendingExpensePart();
+      return { handled: true, ...done };
+    }
+    setPendingExpensePart({ item: standaloneItem });
+    return {
+      handled: true,
+      reply: withPrompt(
+        `Got item "${standaloneItem}". Want to add an expense for it?`,
+        ['Send only the amount next (example: "20"), or send full text like "spent 20 on pizza".']
+      ),
+    };
+  }
+
+  return { handled: false };
 }
 
 /* ============================================================
