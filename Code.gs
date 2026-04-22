@@ -98,7 +98,8 @@ function doPost(e) {
       let reply = '';
       let customPayload = null;
 
-      if      (intent.includes('AddExpense')    || intent.includes('Expense.add') || intent.toLowerCase() === 'log_expense')      { ({ reply, customPayload } = handleAddExpense(params, queryText)); }
+      if      (intent.includes('Welcome')       || intent.toLowerCase() === 'input.welcome' || intent.toLowerCase() === 'default welcome intent') { ({ reply, customPayload } = handleWelcome()); }
+      else if (intent.includes('AddExpense')    || intent.includes('Expense.add') || intent.toLowerCase() === 'log_expense')      { ({ reply, customPayload } = handleAddExpense(params, queryText)); }
       else if (intent.includes('SetBudget')     || intent.includes('Budget.set') || intent.toLowerCase() === 'setbudget')       { ({ reply, customPayload } = handleSetBudget(params)); }
       else if (intent.includes('AddCategory')   || intent.includes('Category.add') || intent.toLowerCase() === 'addcategory')     { ({ reply, customPayload } = handleAddCategory(params)); }
       else if (intent.includes('DeleteExpense') || intent.includes('Expense.delete') || intent.toLowerCase() === 'deleteexpense')   { ({ reply, customPayload } = handleDeleteExpense(params, queryText)); }
@@ -171,18 +172,10 @@ function handleWebsiteMessage(text) {
       clearPendingExpensePart();
     }
 
-    // ── Help / Commands ─────────────────────────────────────────────
-    if (/^help$|^commands$|what can you do|how to use|usage/.test(lower)) {
-      return jsonReply(
-        '🤖 Here are useful commands:\n' +
-        '• "spent 200 on pizza"\n' +
-        '• "spent 120 yesterday on tea"\n' +
-        '• "spent 450 on groceries on 18/04/2026"\n' +
-        '• "set budget 5000"\n' +
-        '• "update last to 250"\n' +
-        '• "delete last"\n' +
-        '• "show summary"'
-      );
+    // ── Welcome / Help ──────────────────────────────────────────────
+    if (/^(hi|hello|hey|start|menu)$/.test(lower) || /^help$|^commands$|what can you do|how to use|usage/.test(lower)) {
+      const w = handleWelcome();
+      return jsonReply(w.reply);
     }
 
     // ── Set Budget ─────────────────────────────────────────────────
@@ -327,6 +320,29 @@ function withPrompt(reply, prompts) {
   const tail = chooseLine(prompts || []);
   if (!tail) return reply;
   return `${reply}\n\n${tail}`;
+}
+
+function handleWelcome() {
+  const intro = chooseLine([
+    'Hey there. Welcome to ChatSpend AI.',
+    'Hi. Great to see you in ChatSpend.',
+    'Welcome back. Ready to track spending quickly?',
+  ]);
+  const reply = [
+    intro,
+    'I can help you log, edit, delete, and summarize expenses.',
+    '',
+    'Try one of these:',
+    '• set budget 5000',
+    '• spent 20 on fanta',
+    '• spent 120 yesterday on tea',
+    '• update last to 250',
+    '• delete last',
+    '• show summary',
+    '',
+    'Tip: you can also send just "20" or just "pizza" and I will guide you.',
+  ].join('\n');
+  return { reply };
 }
 
 const PENDING_EXPENSE_KEY = 'PENDING_EXPENSE_PART';
