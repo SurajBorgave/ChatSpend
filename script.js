@@ -481,6 +481,18 @@ const CATEGORY_LOW_SIGNAL_KEYWORDS = new Set([
   'course', 'maintenance', 'charge', 'bill', 'fee', 'trip',
 ]);
 
+// High-confidence category hints used to calibrate overlaps quickly.
+const CATEGORY_STRONG_HINTS = {
+  Food: ['swiggy', 'zomato', 'restaurant', 'cafe', 'chai', 'coffee', 'biryani', 'chaat'],
+  Groceries: ['kirana', 'grocery', 'groceries', 'vegetable', 'sabzi', 'mandi', 'ration', 'dmart', 'jiomart'],
+  Transport: ['uber', 'ola', 'rapido', 'auto', 'rickshaw', 'metro', 'train', 'petrol', 'diesel', 'fastag'],
+  Bills: ['recharge', 'electricity', 'rent', 'emi', 'dth', 'broadband', 'wifi', 'gas cylinder'],
+  Healthcare: ['doctor', 'hospital', 'clinic', 'pharmacy', 'medicine', 'apollo', 'pathlab'],
+  Education: ['jee', 'neet', 'upsc', 'coaching', 'tuition', 'exam', 'assignment'],
+  Shopping: ['amazon', 'flipkart', 'myntra', 'ajio', 'mall', 'clothes', 'kurti', 'tanishq'],
+  Entertainment: ['movie', 'netflix', 'hotstar', 'bookmyshow', 'ipl', 'concert', 'gaming'],
+};
+
 /**
  * Detect category from an item title/text.
  * Priority: custom categories → default categories → inferred broad category → Others.
@@ -507,6 +519,11 @@ function detectCategory(text) {
     let score = 0;
     const catNameLower = cat.name.toLowerCase();
     if (lower.includes(catNameLower)) score += 3; // explicit name mention
+
+    const strongHints = CATEGORY_STRONG_HINTS[cat.name] || [];
+    for (const hint of strongHints) {
+      if (lower.includes(hint)) score += 4;
+    }
 
     for (const kwRaw of (cat.keywords || [])) {
       const kw = (kwRaw || '').toString().trim().toLowerCase();

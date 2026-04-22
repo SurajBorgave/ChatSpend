@@ -292,6 +292,12 @@ function chooseLine(options) {
   return options[i];
 }
 
+function withPrompt(reply, prompts) {
+  const tail = chooseLine(prompts || []);
+  if (!tail) return reply;
+  return `${reply}\n\n${tail}`;
+}
+
 /* ============================================================
    DIRECT ACTION HANDLER (called from frontend script.js)
    ============================================================ */
@@ -501,11 +507,16 @@ function handleAddExpense(params, queryText) {
   // Store in sheet
   const id = addTransactionToSheet({ amount, title, category, payment, date, month });
 
-  const reply = chooseLine([
+  const replyBase = chooseLine([
     `Done - added ₹${amount} for ${title} (${category} via ${payment}) on ${date}.`,
     `Logged ₹${amount} for ${title} (${payment}) on ${date}.`,
     `Saved: ${title} ₹${amount} (${category}, ${payment}) on ${date}.`,
-  ]) + '\n\nYou can also say: "show summary", "update last to 250", or "delete last".';
+  ]);
+  const reply = withPrompt(replyBase, [
+    'Want a quick check? Say "show summary".',
+    'Need to fix anything? Try "update last to 250".',
+    'Mistake? You can say "delete last".',
+  ]);
   const customPayload = {
     action: 'expenseAdded',
     data: { id, amount, title, category, payment, date, month },
@@ -524,11 +535,15 @@ function handleSetBudget(params) {
   const month = getCurrentMonthKey();
   setBudgetInSheet(month, amount);
 
-  const reply = chooseLine([
+  const replyBase = chooseLine([
     `Budget updated: ₹${amount} for ${month}.`,
     `Done - monthly budget is now ₹${amount} for ${month}.`,
     `Set! Your ${month} budget is ₹${amount}.`,
-  ]) + '\n\nTry: "show summary" to check remaining budget.';
+  ]);
+  const reply = withPrompt(replyBase, [
+    'Say "show summary" to check remaining budget.',
+    'Want to verify quickly? Try "how much spent this month".',
+  ]);
   return { reply, customPayload: { action: 'budgetSet', data: { amount, month } } };
 }
 
@@ -552,7 +567,10 @@ function handleDeleteExpense(params, queryText) {
   if (lower.includes('last') || lower.includes('recent')) {
     const tx = deleteLastTransaction();
     if (!tx) return { reply: '⚠️ No transactions to delete.' };
-    const reply = `Removed last transaction: ${tx.title} (₹${tx.amount}).\n\nIf that was a mistake, say "undo last".`;
+    const reply = withPrompt(
+      `Removed last transaction: ${tx.title} (₹${tx.amount}).`,
+      ['If that was a mistake, say "undo last".']
+    );
     return { reply, customPayload: { action: 'expenseDeleted', data: { id: null } } };
   }
 
@@ -572,7 +590,10 @@ function handleDeleteExpense(params, queryText) {
     }
     const tx = txs[0]; // delete the most recent match
     deleteTransactionById(tx[0]); // col 0 = ID
-    const reply = `Deleted "${tx[1]}" (₹${tx[2]}).\n\nYou can say "undo last" to restore it.`;
+    const reply = withPrompt(
+      `Deleted "${tx[1]}" (₹${tx[2]}).`,
+      ['You can say "undo last" to restore it.']
+    );
     return { reply, customPayload: { action: 'expenseDeleted', data: { id: tx[0] } } };
   }
 
@@ -596,7 +617,10 @@ function handleUpdateExpense(params, queryText) {
     if (!last) return { reply: '⚠️ No valid transactions found to update.' };
     updateTransactionById(last[0], { amount });
     const safeTitle = last[1] || 'Untitled';
-    const reply = `Updated last transaction "${safeTitle}" to ₹${amount}.\n\nNeed another change? Try "update ${safeTitle.toLowerCase()} to 200".`;
+    const reply = withPrompt(
+      `Updated last transaction "${safeTitle}" to ₹${amount}.`,
+      [`Need another change? Try "update ${safeTitle.toLowerCase()} to 200".`]
+    );
     return { reply, customPayload: { action: 'expenseUpdated', data: { id: last[0], amount } } };
   }
 
@@ -621,11 +645,15 @@ function handleUpdateExpense(params, queryText) {
   const txId = tx[0];
   updateTransactionById(txId, { amount });
 
-  const reply = chooseLine([
+  const replyBase = chooseLine([
     `Updated "${tx[1]}" to ₹${amount}.`,
     `Done - "${tx[1]}" is now ₹${amount}.`,
     `Changed "${tx[1]}" amount to ₹${amount}.`,
-  ]) + '\n\nYou can say "show summary" to see the latest totals.';
+  ]);
+  const reply = withPrompt(replyBase, [
+    'Want the latest totals? Say "show summary".',
+    'Need another edit? Try "update last to 250".',
+  ]);
   return { reply, customPayload: { action: 'expenseUpdated', data: { id: txId, amount } } };
 }
 
@@ -638,8 +666,11 @@ function handleSearch(params, queryText) {
     return { reply: `🔍 No transactions found for "${query}".` };
   }
 
-  const lines = txs.slice(0, 5).map(t => `• ${t[1]} – ₹${t[2]} (${t[3]}, ${t[5]})`);
-  const reply = `🔍 Found ${txs.length} result(s) for "${query}":\n${lines.join('\n')}`;
+  const lines = txs.slice(0, 5).map(t => `• ${t[1]} - ₹${t[2]} (${t[3]}, ${t[5]})`);
+  const reply = withPrompt(
+    `I found ${txs.length} result(s) for "${query}":\n${lines.join('\n')}`,
+    ['You can say "update <title> to <amount>" or "delete <title>".']
+  );
   return { reply };
 }
 
@@ -661,12 +692,16 @@ function handleSummary() {
   });
   const catLines = Object.entries(catMap).map(([k, v]) => `  • ${k}: ₹${v.toFixed(0)}`);
 
-  let reply = `📊 *${month} Summary*\n`;
-  reply += `💸 Spent: ₹${spent.toFixed(0)} / Budget: ₹${budget}\n`;
-  reply += `💰 Remaining: ₹${remaining.toFixed(0)}\n`;
-  reply += `📝 Transactions: ${count}\n`;
+  let reply = `Here is your ${month} snapshot:\n`;
+  reply += `Spent: ₹${spent.toFixed(0)} / Budget: ₹${budget}\n`;
+  reply += `Remaining: ₹${remaining.toFixed(0)}\n`;
+  reply += `Transactions: ${count}\n`;
   if (catLines.length) reply += `\nBy Category:\n${catLines.join('\n')}`;
-  if (spent > budget && budget > 0) reply += `\n\n⚠️ You've exceeded your budget!`;
+  if (spent > budget && budget > 0) reply += `\n\nHeads up: you've exceeded your budget.`;
+  reply = withPrompt(reply, [
+    'You can say "show all" to review recent entries.',
+    'Want to adjust? Try "set budget 5000".',
+  ]);
 
   return { reply };
 }
