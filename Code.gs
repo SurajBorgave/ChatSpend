@@ -808,9 +808,11 @@ function extractItemFromExpenseText(text, amount) {
     let out = value
       .replace(/[\u20B9]/g, ' ')
       .replace(/\b(?:rs|inr|rupees?)\b/gi, ' ')
+      .replace(/\b(?:and|then)\s+\d+(?:\.\d+)?\s+(?:on|for)\s+.*$/gi, ' ')
       .replace(/\b\d+(?:\.\d+)?\b/g, ' ')
       .replace(/\b(?:and|then)\s+on\b/gi, ' ')
       .replace(/\b(?:and|then)\s+.+$/gi, ' ')
+      .replace(/\b(?:and|then)\b\s*$/gi, ' ')
       .replace(/\b(?:for|of|on|towards)\b$/gi, ' ')
       .replace(/^[^a-zA-Z]+|[^a-zA-Z0-9)\]]+$/g, ' ')
       .replace(/\s+/g, ' ')
