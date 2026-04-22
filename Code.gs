@@ -542,8 +542,15 @@ function handleDeleteExpense(params, queryText) {
     return { reply, customPayload: { action: 'expenseDeleted', data: { id: null } } };
   }
 
-  // "delete pizza" – search by title
-  const query = (params['any'] || params['title'] || params['item'] || '').toString().trim();
+  // "delete pizza" – search by title.
+  // Dialogflow sometimes captures only the verb (e.g., any="delete"), so
+  // recover the target from raw text when needed.
+  let query = (params['any'] || params['title'] || params['item'] || '').toString().trim();
+  const badTargets = ['delete', 'remove', 'erase', 'del', 'transaction', 'expense', 'last', 'recent'];
+  if (!query || badTargets.includes(query.toLowerCase())) {
+    const m = (queryText || '').match(/\b(?:delete|remove|erase)\s+(?:the\s+)?(?:expense|transaction\s+)?(?:for\s+)?(.+?)\s*$/i);
+    if (m && m[1]) query = m[1].trim();
+  }
   if (query) {
     const txs = searchTransactions(query);
     if (txs.length === 0) {
@@ -579,9 +586,11 @@ function handleUpdateExpense(params, queryText) {
     return { reply, customPayload: { action: 'expenseUpdated', data: { id: last[0], amount } } };
   }
 
-  if (!query) {
-    // Fallback parse from free text: "update pizza to 300"
-    const m = (queryText || '').match(/\bupdate\s+(.+?)\s+(?:to|as)\s+\d+(?:\.\d+)?\b/i);
+  const badTargets = ['edit', 'update', 'change', 'modify', 'expense', 'transaction', 'last', 'recent'];
+  if (!query || badTargets.includes(query.toLowerCase())) {
+    // Fallback parse from free text:
+    // "update pizza to 300", "edit uber to 120", "change coffee amount to 80"
+    const m = (queryText || '').match(/\b(?:update|edit|change|modify)\s+(.+?)\s+(?:amount\s+)?(?:to|as|into)\s+\d+(?:\.\d+)?\b/i);
     if (m && m[1]) query = m[1].trim();
   }
 
