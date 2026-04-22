@@ -163,6 +163,166 @@ const DEFAULT_CATEGORIES = [
   },
 ];
 
+// Extra keyword bank to improve natural-language category detection coverage.
+// This keeps behavior unchanged while significantly broadening phrase matching.
+const CATEGORY_KEYWORD_EXPANSION = {
+  Food: [
+    'brunch', 'supper', 'takeaway', 'takeout', 'home delivery', 'dessert', 'bakery', 'canteen',
+    'mess', 'tiffin', 'combo meal', 'thali', 'roll', 'fries', 'shake', 'brownie', 'pastry',
+    'waffle', 'donut', 'doughnut', 'momo', 'manchurian', 'fried rice', 'hakka noodles',
+    'ramen', 'sushi', 'taco', 'burrito', 'shawarma', 'falafel', 'bbq', 'grill', 'steak',
+    'omelette', 'omelet', 'sandwiches', 'wrap', 'puffs', 'cappuccino', 'latte', 'espresso',
+    'americano', 'mocktail', 'brunch spot', 'food court', 'snacks', 'midnight snack',
+    // India-focused
+    'vadapav', 'vada pav', 'pani puri', 'golgappa', 'phuchka', 'bhel', 'bhelpuri',
+    'sev puri', 'dahi puri', 'ragda patty', 'misal', 'misal pav', 'poori bhaji',
+    'pav bhaji', 'sambar', 'rasam', 'uttapam', 'appam', 'puttu', 'parotta', 'idiyappam',
+    'kathi roll', 'egg roll', 'frankie', 'chaat', 'lassi shop', 'juice center',
+    'darshini', 'udupi hotel', 'tiffin center', 'mess fee', 'canteen coupon',
+    'haldiram', 'bikanervala', 'saravana bhavan', 'naivedyam', 'sweet mart',
+  ],
+  Groceries: [
+    'provision store', 'daily essentials', 'household groceries', 'fresh produce', 'dry fruits',
+    'nuts', 'almonds', 'cashews', 'raisins', 'dates', 'spaghetti', 'macaroni', 'vermicelli',
+    'cereal', 'cornflakes', 'muesli', 'jam', 'peanut butter', 'ketchup', 'sauce', 'vinegar',
+    'pickles', 'papad', 'ready to cook', 'frozen food', 'frozen peas', 'frozen vegetables',
+    'detergent', 'dishwash', 'dish soap', 'cleaning liquid', 'surface cleaner', 'harpic',
+    'garbage bags', 'foil', 'cling wrap', 'tupperware', 'storage box', 'wholesale market',
+    'dmart', 'reliance fresh', 'spencers', 'more supermarket', 'easyday', 'star bazaar',
+    // India-focused
+    'kirana shop', 'kirana store', 'ration', 'ration shop', 'sabzi', 'mandi', 'subzi mandi',
+    'apmc', 'atta chakki', 'rice bag', 'basmati rice', 'sona मसूरी', 'sona masuri',
+    'toor dal', 'tur dal', 'moong dal', 'chana dal', 'urad dal', 'rajma', 'chole',
+    'poha', 'suji', 'besan', 'rava', 'jeera', 'ajwain', 'hing', 'kasuri methi',
+    'garam masala', 'sambar powder', 'rasam powder', 'pickle', 'achar', 'papadum',
+    'amul', 'mother dairy', 'nandini', 'aavin', 'heritage milk', 'country delight',
+    'jiomart', 'big basket', 'bbnow', 'zepto cafe', 'dunzo daily',
+  ],
+  Toiletries: [
+    'body lotion', 'handwash', 'hand wash', 'sanitizer', 'face cream', 'night cream',
+    'day cream', 'lip balm', 'kajal', 'compact', 'primer', 'concealer', 'makeup remover',
+    'wet wipes', 'baby wipes', 'shower gel', 'bath soap', 'body mist', 'hair serum',
+    'hair oil', 'beard oil', 'beard trimmer', 'trimmer', 'electric razor', 'feminine hygiene',
+    'intimate wash', 'cotton buds', 'ear buds', 'nail cutter', 'manicure', 'pedicure',
+    'soap refill', 'tooth powder', 'tongue cleaner', 'dental floss', 'shaving blades',
+    'after shave', 'face mask', 'sheet mask', 'acne cream', 'ointment', 'first aid',
+    // India-focused
+    'ayurvedic', 'ayurveda', 'neem soap', 'multani mitti', 'ubtan', 'kajal stick',
+    'bindi', 'sindoor', 'mehendi', 'henna cone', 'coconut oil', 'hair oiling',
+    'clinic plus', 'dove soap', 'lifebuoy', 'lux soap', 'medimix', 'vicco',
+    'himalaya', 'biotique', 'patanjali', 'dettol soap', 'savlon liquid',
+    'mamaearth', 'wow skin', 'khadi', 'boroline', 'moov', 'iodex',
+  ],
+  Transport: [
+    'commute', 'daily commute', 'office commute', 'bus pass', 'metro card', 'smart card',
+    'local train', 'suburban train', 'platform ticket', 'journey', 'ride', 'carpool',
+    'ride share', 'bike taxi', 'scooty', 'maintenance fuel', 'car wash', 'service center',
+    'puncture', 'tyre', 'battery', 'engine oil', 'mechanic', 'vehicle repair', 'license fee',
+    'registration', 'fastag', 'e-challan', 'traffic fine', 'airport cab', 'railway ticket',
+    'train ticket', 'flight ticket', 'boarding pass', 'seat booking', 'reservation', 'sleeper',
+    'ac coach', 'bus ticket', 'intercity', 'outstation cab', 'parking fee', 'valet',
+    // India-focused
+    'auto rickshaw', 'rickshaw', 'share auto', 'local auto', 'best bus', 'bmts',
+    'dtc', 'ksrtc', 'msrtc', 'apsrtc', 'tsrtc', 'redbus booking', 'irctc ticket',
+    'tatkal', 'platform pass', 'local pass', 'metro recharge', 'ncmc card',
+    'fastag recharge', 'petrol pump', 'indianoil', 'bharat petroleum', 'hp petrol',
+    'cng', 'png', 'rapido bike', 'ola auto', 'uber auto', 'yulu bike',
+    'bike service', 'rto fee', 'puc', 'pollution certificate', 'challan payment',
+  ],
+  Shopping: [
+    'apparel', 'ethnic wear', 'formal wear', 'casual wear', 'sportswear', 'activewear',
+    'nightwear', 'kids wear', 'mens wear', 'womens wear', 'accessories', 'cosmetics',
+    'home decor', 'kitchenware', 'cookware', 'utensils', 'cutlery', 'appliances',
+    'mixer', 'grinder', 'microwave', 'fan', 'air cooler', 'ac', 'television', 'smart tv',
+    'monitor', 'printer', 'ink', 'router', 'modem', 'sim card', 'phone case', 'screen guard',
+    'wardrobe', 'sofa', 'table', 'chair', 'mattress', 'lamp', 'curtains', 'gift card',
+    'birthday gift', 'anniversary gift', 'festive shopping', 'sale', 'discount deal',
+    // India-focused
+    'kurti', 'lehenga', 'salwar', 'churidar', 'dupatta', 'blouse', 'sherwani', 'jooti',
+    'kolhapuri', 'chappal', 'bata', 'liberty shoes', 'lenskart', 'titan', 'fastrack',
+    'croma', 'reliance digital', 'vijay sales', 'poorvika', 'sangeetha mobiles',
+    'smart bazaar', 'pantaloons', 'westside', 'max fashion', 'trends', 'zudio',
+    'firstcry', 'hamleys', 'archies', 'fabindia', 'manyavar', 'kalyan jewellers',
+    'tanishq', 'malabar gold', 'caratlane', 'home centre', 'nilkamal',
+  ],
+  Entertainment: [
+    'ott', 'streaming', 'movie night', 'web series', 'series', 'anime', 'podcast',
+    'music subscription', 'gaming pass', 'in-game purchase', 'dlc', 'arcade games',
+    'theme park', 'water park', 'resort', 'staycation', 'weekend trip', 'trek', 'hiking',
+    'camping', 'adventure', 'escape room', 'standup', 'comedy show', 'live show',
+    'festival', 'fan event', 'sports ticket', 'match ticket', 'stadium', 'bowling alley',
+    'snooker', 'pool', 'board game', 'hobby class', 'dance class', 'zumba', 'yoga class',
+    'karaoke night', 'pub night', 'night club', 'outing expense', 'fun activity',
+    // India-focused
+    'bookmyshow', 'pvr', 'inox', 'cinepolis', 'single screen', 'ipl', 'cricket match',
+    'pro kabaddi', 'isl match', 'hotstar premium', 'sony liv', 'zee5', 'jio cinema',
+    'gaana', 'wynk', 'jiosaavn', 'aajtak live', 'weekend getaway', 'hill station trip',
+    'goa trip', 'lonavala', 'manali', 'ooty', 'coorg', 'nandi hills', 'gateway trip',
+    'garba night', 'dandiya', 'navratri event', 'ganpati event', 'college fest',
+  ],
+  Bills: [
+    'utility bill', 'electric bill', 'water charge', 'wifi bill', 'internet bill',
+    'mobile recharge', 'landline', 'broadband bill', 'postpaid bill', 'prepaid recharge',
+    'house rent', 'lease', 'society maintenance', 'hoa', 'property tax', 'income tax',
+    'gst', 'municipal tax', 'tuition fee', 'school fee', 'college fee', 'hostel fee',
+    'loan installment', 'car loan', 'home loan', 'education loan', 'credit card bill',
+    'minimum due', 'late fee', 'service charge', 'platform fee', 'convenience fee',
+    'domain renewal', 'hosting', 'cloud subscription', 'software license', 'annual plan',
+    'quarterly bill', 'monthly due', 'electric meter', 'water meter', 'gas bill',
+    // India-focused
+    'eb bill', 'bescom', 'mseb', 'tneb', 'adani electricity', 'torrent power',
+    'bwssb', 'water tax', 'property maintenance', 'society charges', 'flat maintenance',
+    'rent transfer', 'house rent', 'pg rent', 'hostel rent', 'maid salary',
+    'cook salary', 'newspaper bill', 'milk bill', 'broadband recharge', 'jio fiber',
+    'airtel xstream', 'bsnl fiber', 'act fibernet', 'vi recharge', 'jio recharge',
+    'airtel recharge', 'dth recharge', 'tata play', 'dish tv', 'sun direct',
+    'gas cylinder', 'bharat gas', 'indane', 'hp gas', 'emi payment', 'bajaj finserv',
+  ],
+  Healthcare: [
+    'consultation', 'consultation fee', 'checkup', 'health checkup', 'diagnostic test',
+    'blood work', 'cbc', 'sugar test', 'thyroid test', 'ecg', 'ultrasound', 'sonography',
+    'x-ray', 'mri scan', 'ct scan', 'dressing', 'stitches', 'emergency', 'ambulance',
+    'admission', 'ward', 'icu', 'surgery charges', 'medication', 'painkiller', 'antibiotic',
+    'supplements', 'calcium', 'iron tablets', 'vitamin d', 'eyecare', 'vision test',
+    'contact lens', 'frames', 'orthopedic', 'dermatology', 'skin treatment',
+    'psychology', 'therapy session', 'counseling session', 'denture', 'braces',
+    // India-focused
+    'apollo', 'apollo clinic', 'fortis', 'max hospital', 'manipal hospital',
+    'aiims', 'government hospital', 'nursing home', 'diagnostic centre', 'path lab',
+    'dr lal pathlabs', 'thyrocare', 'metropolis lab', 'srl diagnostics',
+    'ayurvedic doctor', 'homeopathy', 'homeopathic medicine', 'physio',
+    'tablet strip', 'syringe', 'band aid', 'crocin', 'dolo', 'paracetamol',
+    'digene', 'gelusil', 'eno', 'electral', 'ors', 'zincovit', 'becosules',
+    'health insurance premium', 'mediclaim', 'cashless claim',
+  ],
+  Education: [
+    'exam fee', 'application fee', 'enrollment', 'registration fee', 'admission fee',
+    'semester fee', 'tuition payment', 'lab fee', 'hostel payment', 'library fine',
+    'study material', 'reference book', 'guide book', 'practice set', 'mock test',
+    'test series', 'assignment print', 'project print', 'photocopy', 'xerox',
+    'pen pencil', 'highlighter', 'marker', 'calculator', 'geometry box', 'backpack',
+    'online class', 'live class', 'recorded course', 'certification', 'internship course',
+    'language course', 'coding course', 'bootcamp', 'workshop fee', 'seminar ticket',
+    'conference pass', 'research paper', 'journal access', 'exam prep', 'coaching fee',
+    // India-focused
+    'jee', 'neet', 'cat exam', 'gate exam', 'upsc', 'ssc', 'bank po', 'railway exam',
+    'nda exam', 'gre', 'ielts', 'toefl', 'cuet', 'board exam', 'cbse', 'icse',
+    'state board', 'university exam', 'semester exam', 'revaluation fee', 'hall ticket',
+    'admit card', 'tuition class', 'private tuition', 'coaching institute',
+    'allen', 'aakash', 'fiitjee', 'resonance', 'byjus class', 'unacademy plus',
+    'pw course', 'physics wallah', 'gate academy', 'testbook', 'adda247',
+    'xerox notes', 'spiral binding', 'project material', 'record book', 'lab manual',
+  ],
+};
+
+for (const cat of DEFAULT_CATEGORIES) {
+  const extra = CATEGORY_KEYWORD_EXPANSION[cat.name] || [];
+  if (!extra.length) continue;
+  const merged = new Set((cat.keywords || []).map(k => (k || '').toString().trim().toLowerCase()));
+  extra.forEach(k => merged.add((k || '').toString().trim().toLowerCase()));
+  cat.keywords = Array.from(merged).filter(Boolean);
+}
+
 const CATEGORY_COLORS = [
   '#7c3aed', '#06b6d4', '#10b981', '#f59e0b',
   '#ef4444', '#ec4899', '#8b5cf6', '#14b8a6',
@@ -272,9 +432,58 @@ function getAllCategories() {
   ];
 }
 
+// Only create broad inferred categories (never item-name categories).
+const BROAD_CATEGORY_INFERENCE_RULES = [
+  {
+    name: 'Electronics',
+    keywords: [
+      'mobile', 'phone', 'smartphone', 'iphone', 'android', 'samsung', 'oneplus', 'pixel',
+      'laptop', 'notebook', 'macbook', 'desktop', 'monitor', 'keyboard', 'mouse',
+      'headphone', 'earbuds', 'earphones', 'speaker', 'charger', 'power bank',
+      'cable', 'adapter', 'usb', 'ssd', 'hard disk', 'pendrive', 'router',
+      'tablet', 'ipad', 'smartwatch', 'watch strap', 'printer',
+    ],
+  },
+];
+
+function ensureCustomCategory(name, keywordSeed = '') {
+  const normalized = capitalize((name || '').toString().trim());
+  if (!normalized) return '';
+
+  const existsInDefaults = DEFAULT_CATEGORIES.some(c => c.name.toLowerCase() === normalized.toLowerCase());
+  const existing = state.customCategories.find(c => c.name.toLowerCase() === normalized.toLowerCase());
+  if (existsInDefaults || existing) return normalized;
+
+  const keywords = keywordSeed ? [keywordSeed.toLowerCase().trim()] : [];
+  state.customCategories.push({
+    name: normalized,
+    keywords,
+    icon: '🏷️',
+    autoCreated: true,
+  });
+  saveState();
+  syncCategoryToBackend(normalized, keywords.join(','));
+  return normalized;
+}
+
+function inferBroadCategory(text) {
+  const lower = (text || '').toLowerCase().trim();
+  if (!lower) return '';
+  for (const rule of BROAD_CATEGORY_INFERENCE_RULES) {
+    if (rule.keywords.some(kw => lower.includes(kw))) return rule.name;
+  }
+  return '';
+}
+
+// Low-signal words that appear across categories and cause false positives.
+const CATEGORY_LOW_SIGNAL_KEYWORDS = new Set([
+  'ticket', 'subscription', 'store', 'shop', 'market', 'class',
+  'course', 'maintenance', 'charge', 'bill', 'fee', 'trip',
+]);
+
 /**
  * Detect category from an item title/text.
- * Priority: custom categories → default categories → auto-create new category.
+ * Priority: custom categories → default categories → inferred broad category → Others.
  * @param {string} text - item name / description
  * @returns {string} category name (always non-null)
  */
@@ -290,32 +499,34 @@ function detectCategory(text) {
     if (kws.some(kw => lower.includes(kw))) return cat.name;
   }
 
-  // 2. Check default categories
+  // 2. Weighted default-category matching (reduces overlap mistakes)
+  let bestDefault = 'Others';
+  let bestScore = 0;
   for (const cat of DEFAULT_CATEGORIES) {
     if (cat.name === 'Others') continue;
-    if (lower.includes(cat.name.toLowerCase())) return cat.name;
-    if (cat.keywords.some(kw => lower.includes(kw))) return cat.name;
-  }
+    let score = 0;
+    const catNameLower = cat.name.toLowerCase();
+    if (lower.includes(catNameLower)) score += 3; // explicit name mention
 
-  // 3. No match found — auto-create a new category from the item title
-  //    Capitalize the text (use first word if multi-word, else full)
-  const newCatName = capitalize(lower.split(' ')[0]); // e.g. "carrots" → "Carrots"
-  const alreadyExists = state.customCategories.some(
-    c => c.name.toLowerCase() === newCatName.toLowerCase()
-  );
-  if (!alreadyExists && newCatName.length >= 2) {
-    const keywordString = lower;
-    state.customCategories.push({
-      name: newCatName,
-      keywords: [lower],      // add the full phrase as a keyword for future matches
-      icon: '🏷️',
-      autoCreated: true,      // flag as auto-created
-    });
-    saveState();
-    // Keep backend category sheet aligned with local auto-created categories.
-    syncCategoryToBackend(newCatName, keywordString);
+    for (const kwRaw of (cat.keywords || [])) {
+      const kw = (kwRaw || '').toString().trim().toLowerCase();
+      if (!kw || CATEGORY_LOW_SIGNAL_KEYWORDS.has(kw)) continue;
+      if (lower.includes(kw)) score += kw.includes(' ') ? 2 : 1;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestDefault = cat.name;
+    }
   }
-  return newCatName;
+  if (bestScore > 0) return bestDefault;
+
+  // 3. No match found — allow only broad inferred categories (e.g. mobile -> Electronics)
+  const inferredBroad = inferBroadCategory(lower);
+  if (inferredBroad) return ensureCustomCategory(inferredBroad, lower);
+
+  // 4. Unknown item: do not create a random category from item text.
+  return 'Others';
 }
 
 /** Get emoji icon for a category name */
