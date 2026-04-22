@@ -1064,8 +1064,11 @@ function searchTransactions(query) {
 function deleteTransactionById(id) {
   const sheet = getSheet(SHEETS.TRANSACTIONS);
   const { data, map, start } = getTransactionRowsWithMap(sheet);
+  const targetId = String(id || '').trim();
+  if (!targetId) return false;
   for (let i = start; i < data.length; i++) {
-    if (data[i][map.id] === id) {
+    const rowId = String(data[i][map.id] || '').trim();
+    if (rowId === targetId) {
       // Save to undo buffer
       const tx = {
         id: data[i][map.id],
@@ -1119,8 +1122,11 @@ function deleteLastTransaction() {
 function updateTransactionById(id, changes) {
   const sheet = getSheet(SHEETS.TRANSACTIONS);
   const { data, map, start } = getTransactionRowsWithMap(sheet);
+  const targetId = String(id || '').trim();
+  if (!targetId) return false;
   for (let i = start; i < data.length; i++) {
-    if (data[i][map.id] === id) {
+    const rowId = String(data[i][map.id] || '').trim();
+    if (rowId === targetId) {
       if (changes.amount !== undefined) {
         setTransactionAmountCellFormat_(sheet, i + 1, map, changes.amount);
       }
